@@ -2,16 +2,36 @@
 
 set -e
 
-echo % clean up
-rm -fr $PWD/depot $PWD/src $PWD/dst || true
-
 echo % create p4 depot
-P4ROOT=$PWD/depot; export P4ROOT
+
+DEBUG=0
+
+if [ -n $P4ROOT ] ; then
+    echo P4ROOT=$P4ROOT
+else
+    P4ROOT=$PWD/depot; export P4ROOT
+fi
+
 P4AUDIT=$P4ROOT/audit; export P4AUDIT
 P4JOURNAL=$P4ROOT/journal; export P4JOURNAL
 P4LOG=$P4ROOT/log; export P4LOG
 P4PORT=localhost:16661; export P4PORT
-P4DEBUG=1; export P4DEBUG
+P4DEBUG=$DEBUG; export P4DEBUG
+
+if [ $DEBUG -ne 0 ] ; then
+    HGDEBUG=--debug
+    filter() { 
+        cat
+    }
+else
+    filter() { 
+        sed -r -e 's,[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2},$DATE\ $TIME,' \
+	       -e 's/[a-z]+@/$USER@/' \
+	       -e 's/\{\{mercurial\ [0-9a-f]{40}(:[0-9a-f]{40})?\}\}/\{\{mercurial ids\}\}/'
+    }
+fi
+
+rm -fr $P4ROOT $PWD/src $PWD/dst $PWD/new || true
 
 echo % start the p4 server
 [ ! -d $P4ROOT ] && mkdir $P4ROOT
@@ -61,35 +81,64 @@ p4 submit -d "p4 delete b/c"
 cd ..
 
 echo % convert
-hg convert -s p4 $DEPOTPATH dst
+hg $HGDEBUG convert -s p4 $DEPOTPATH dst
+
+echo "[paths]" >>dst/.hg/hgrc
+echo "default = p4://$P4PORT/$P4CLIENT" >>dst/.hg/hgrc
 
 echo % now work in hg
 cd dst
-hg up
+hg $HGDEBUG up
 
-echo % outgoing
-hg out p4://$P4PORT/$P4CLIENT
+echo % nothing incoming
+hg $HGDEBUG incoming
+
+echo % nothing outgoing
+hg $HGDEBUG outgoing
 
 echo % change some files in hg
 echo aab >> a
-hg commit -m "hg change a"
+hg $HGDEBUG commit -m "hg change a"
 
 echo ee >> b/e
-hg add b/e
-hg ci -m "hg add b/e"
+hg $HGDEBUG add b/e
+hg $HGDEBUG ci -m "hg add b/e"
 
 echo ddd >>b/d
-hg commit -m "hg change b/d"
+hg $HGDEBUG commit -m "hg change b/d"
+
+echo % outgoing
+hg $HGDEBUG outgoing | filter
+
+echo % skip a changelist
+p4 change -o | sed -r 's/<.+>/test/' >change.$$
+p4 change -d $(p4 change -i <change.$$ | awk '/created/ { print $2 }')
+
+echo % push
+# hg $HGDEBUG push --submit 
+hg $HGDEBUG push
+hg $HGDEBUG p4submit 7	
+
+head .hg/p4stat
+
+echo % outgoing
+hg $HGDEBUG outgoing | filter
+
+echo % p4 results
+cd ../src
+p4 changes	 | filter
+p4 describe -s 7 | filter
+
+cd ../dst
 
 #echo % run bash
 #bash
 
-echo % outgoing
-hg out p4://$P4PORT/$P4CLIENT
+echo % incoming
+hg $HGDEBUG incoming
 
-echo % push
-hg --debug push --force p4://$P4PORT/$P4CLIENT
+echo % pull
+hg $HGDEBUG pull
 
-cd ../src
-p4 changes
-p4 describe -s 6
+hg glog
+
