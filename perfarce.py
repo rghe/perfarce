@@ -99,7 +99,7 @@ class p4client:
             self.re_keywords_old = re.compile('\$(Id|Header):[^$\n]*\$')
             self.re_hgid = re.compile('{{mercurial (([0-9a-f]{40})(:([0-9a-f]{40}))?)}}')
             self.re_number = re.compile('.+ ([0-9]+) .+')
-            self.actions = { 'edit':'M', 'add':'A', 'delete':'R' }
+            self.actions = { 'edit':'M', 'add':'A', 'branch':'A', 'integrate':'M' }
 
             self.authors = {}
 
@@ -126,12 +126,11 @@ class p4client:
     def latest(self):
         '''Find the most recent changelist which has the p4 extra data which
         gives the p4 changelist it was converted from'''
-
-        for rev in xrange(len(self.repo), 0, -1):
-            rev = self.repo[rev]
-            extra = rev.extra()
+        for rev in xrange(len(self.repo)-1, -1, -1):
+            ctx = self.repo[rev]
+            extra = ctx.extra()
             if 'p4' in extra:
-                return rev.node(), int(extra['p4'])
+                return ctx.node(), int(extra['p4'])
         raise util.Abort(_('no p4 changelist revision found'))
 
 
@@ -256,8 +255,15 @@ class p4client:
                 if df in self.wherecache:
                     lf = self.wherecache[df]
                 else:
-                    where = self.runs('where %s' % df)
+                    where = self.runs('where "%s"' % df, abort=False)
+                    if where['code'] == 'error':
+                        if where['data'].endswith('file(s) not in client view.\n'):
+                            i += 1
+                            continue
+                        else:
+                            raise util.Abort(where['data'])
                     lf = where['path']
+                    lf = util.pconvert(lf)
                     if lf.startswith('%s/' % self.root):
                         lf = lf[len(self.root) + 1:]
                     else:
@@ -276,16 +282,17 @@ class p4client:
         mode, keywords = self.decodetype(filet[3])
 
         if self.keep:
-            self.run('sync %s@%s' % (filet[0], change), abort=False)
 
-            fn = os.path.join(self.root, filet[1])
+            self.runs('sync "%s"@%s' % (filet[0], change), abort=False)
+            fn = os.sep.join([self.root, filet[1]])
+            fn = util.localpath(fn)
             if mode == 'l':
                 contents = os.readlink(fn)
             else:
                 contents = file(fn, 'rb').read()
         else:
             contents = []
-            for d in self.run('print %s@%s' % (filet[0], change)):
+            for d in self.run('print "%s"@%s' % (filet[0], change)):
                 code = d['code']
                 if code == 'text' or code == 'binary':
                     contents.append(d['data'])
@@ -318,7 +325,7 @@ class p4client:
             p4id = 0
 
         changes = []
-        for d in client.run('changes -s submitted -L @%d,#head' % p4id):
+        for d in client.run('changes -s submitted -L ...@%d,#head' % p4id):
             c = int(d['change'])
             if c != p4id:
                 changes.append(c)
@@ -669,8 +676,9 @@ def identify(ui, repo, *args, **opts):
             raise util.Abort(_('no p4 changelist revision found'))
         changelist = int(extra['p4'])
     else:
-        ctx, changelist = latestp4changelist(repo)
-        ctx = repo[ctx]
+        client = p4client(ui, repo, 'p4:///')
+        p4rev, changelist = client.latest()
+        ctx = repo[p4rev]
 
     num = opts.get('num')
     doid = opts.get('id')
