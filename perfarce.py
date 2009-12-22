@@ -76,7 +76,7 @@ def uisetup(ui):
 class p4client:
 
     def __init__(self, ui, repo, path):
-        #'initialize a p4client class from the remote path'
+        'initialize a p4client class from the remote path'
 
         try:
             assert path.startswith('p4://')
@@ -99,7 +99,7 @@ class p4client:
             self.re_keywords_old = re.compile('\$(Id|Header):[^$\n]*\$')
             self.re_hgid = re.compile('{{mercurial (([0-9a-f]{40})(:([0-9a-f]{40}))?)}}')
             self.re_number = re.compile('.+ ([0-9]+) .+')
-            self.actions = { 'edit':'M', 'add':'A', 'branch':'A', 'integrate':'M' }
+            self.actions = { 'edit':'M', 'add':'A', 'delete':'R', 'branch':'A', 'integrate':'M' }
 
             self.authors = {}
 
@@ -108,17 +108,18 @@ class p4client:
                 s = '%s:1666' % s
             self.server = s
             if c:
-                for d in self.run('client -o "%s"' % c):
-                    for i in d:
-                        if i == 'Root' or i.startswith('AltRoots'):
-                            if os.path.exists(d[i]):
-                                self.root = d[i]
+                d = self.runs('client -o "%s"' % c)
+                for n in ['Root'] + ['AltRoots%d' % i for i in range(9)]:
+                    if n in d and os.path.isdir(d[n]):
+                        self.root = util.pconvert(d[n])
+                        break
                 self.client=c
         except:
             raise util.Abort(_('not a p4 repository'))
 
     
     def close(self):
+        'clean up any client state'
         if self.p4statdirty:
             self._writep4stat()
 
@@ -152,17 +153,17 @@ class p4client:
                 keywords = re_keywords
         return mode, keywords
 
-    
+    SUBMITTED = 'submitted'
     def getpending(self, node):
-        '''return p4 submission state for node: True if submitted, False if
-        pending or None if not in a changelist'''
+        '''return p4 submission state for node: SUBMITTED, a changelist
+        number if pending or None if not in a changelist'''
         if self.p4stat is None:
             self._readp4stat()
         return self.p4stat.get(node, None)
 
     def setpending(self, node, state):
-        '''set p4 submission state for node: True if submitted, False if
-        pending or None if not in a changelist'''
+        '''set p4 submission state for node: SUBMITTED, a changelist
+        number if pending or None if not in a changelist'''
         r = self.getpending(node)
         if r != state:
             self.p4statdirty = True
@@ -171,15 +172,25 @@ class p4client:
             else:
                 self.p4stat[node] = state
 
+    def getpendingdict(self):
+        'return p4 submission state dictionary'
+        if self.p4stat is None:
+            self._readp4stat()
+        return self.p4stat
+
     def _readp4stat(self):
         'read .hg/p4stat file'
         self.p4stat = {}
         try:
             for line in self.repo.opener('p4stat', 'r', text=True):
                 line = line.strip().split(' ',1)
-                self.p4stat[line[0]] = (line[1] == 'submitted')
+                if line[1].startswith('s'):
+                    state = self.SUBMITTED
+                else:
+                    state = int(line[1])
+                self.p4stat[line[0]] = state
         except:
-            pass
+            self.ui.note('error reading p4stat')
         self.ui.debug('read p4stat=%r\n' % self.p4stat)
         self.p4statdirty = False
 
@@ -187,7 +198,7 @@ class p4client:
         'write .hg/p4stat file'
         fd = self.repo.opener('p4stat', 'w', text=True)
         for n in self.p4stat:
-            fd.write('%s %s\n' % (n, self.p4stat[n] and 'submitted' or 'pending'))
+            fd.write('%s %s\n' % (n, self.p4stat[n]))
         fd.close()
         self.p4statdirty = False
         self.ui.debug('write p4stat=%r\n' % self.p4stat)
@@ -370,11 +381,22 @@ class p4client:
         
         nodes = repo.changelog.nodesbetween([ctx1.node()], [ctx2.node()])[0][1:]
 
-        # check that nodes have not already been pushed
+        # trim off nodes at either end that have already been pushed
+        for end in [0, -1]:
+            while nodes:
+                n = repo[nodes[end]]
+                pending = client.getpending(n.hex())
+                if (out and pending > 0) or pending == client.SUBMITTED:
+                    del nodes[end]
+                else:
+                    break
+
+        # check that remaining nodes have not already been pushed
         for n in nodes:
             n = repo[n]
             fail = False
-            if out and client.getpending(n.hex()) is not None or client.getpending(n.hex()):
+            pending = client.getpending(n.hex())
+            if (out and pending > 0) or pending == client.SUBMITTED:
                 fail = True
             for ctx3 in n.children():
                 extra = ctx3.extra()
@@ -382,13 +404,10 @@ class p4client:
                     fail = True
                     break
             if fail:
-                if rev:
-                    raise util.Abort(_('can not push, changeset %s is already in p4' % n))
-                else:
-                    ctx1 = ctx2
+                raise util.Abort(_('can not push, changeset %s is already in p4' % n))
 
         # find changed files
-        if ctx1 == ctx2:
+        if not nodes:
             mod = add = rem = None
         else:
             mod, add, rem = repo.status(node1=ctx1.node(), node2=ctx2.node())[:3]
@@ -437,7 +456,7 @@ class p4client:
             cl = d.get('submittedChange', cl)
 
         for n in nodes:
-            self.setpending(self.repo[n].hex(), True)
+            self.setpending(self.repo[n].hex(), self.SUBMITTED)
 
         self.ui.note(_('submitted changelist %s\n') % cl)
 
@@ -638,7 +657,7 @@ def push(original, ui, repo, dest=None, **opts):
         client.submit(nodes, use, mod + add)
     else:
         for n in nodes:
-            client.setpending(repo[n].hex(), False)
+            client.setpending(repo[n].hex(), int(use))
         ui.note(_('pending changelist %s\n') % use)
 
     client.close()
@@ -646,17 +665,60 @@ def push(original, ui, repo, dest=None, **opts):
 
 # --------------------------------------------------------------------------
 
-def submit(ui, repo, change, dest=None, **opts):
+def submit(ui, repo, change=None, dest=None, **opts):
     '''do a p4 submit and update the repository state'''
 
     dest, revs, co = hg.parseurl(ui.expandpath(dest or 'default-push',
                                                dest or 'default'))
-    change = int(change)
+    
     client = p4client(ui, repo, dest)
+    if change:
+        change = int(change)
+    else:
+        changes = {}
+        pending = client.getpendingdict()
+        for i in pending:
+            i = pending[i]
+            if isinstance(i,int):
+                changes[i] = True
+        changes = changes.keys()
+        if len(changes) == 0:
+            raise util.Abort(_('no pending changelists to submit'))
+        elif len(changes) > 1:
+            changes.sort()
+            raise util.Abort(_('more than one changelist to submit: %s') % ' '.join(str(i) for i in changes))
+        change = changes[0]
+
     desc, user, date, files = client.describe(change, files=True)
     nodes = client.parsenodes(desc)
 
     client.submit(nodes, change, files)
+    client.close()
+
+
+def pending(ui, repo, dest=None, **opts):
+    'report changelists already pushed and pending for submit in p4'
+
+    dest, revs, co = hg.parseurl(ui.expandpath(dest or 'default-push',
+                                               dest or 'default'))
+    
+    client = p4client(ui, repo, dest)
+
+    changes = {}
+    pending = client.getpendingdict()
+    for i in pending:
+        j = pending[i]
+        if isinstance(j,int):
+            if j in changes:
+                changes[j].append(i)
+            else:
+                changes[j] = [i]
+    keys = changes.keys()
+    keys.sort()
+
+    for i in keys:
+        ui.write('%d %s\n' % (i, ' '.join(changes[i])))
+
     client.close()
 
 
@@ -702,6 +764,10 @@ cmdtable = {
         (   submit,
             [ ],
             'hg p4submit changelist [p4://server/client]'),
+    'p4pending': 
+        (   pending,
+            [ ],
+            'hg p4pending [p4://server/client]'),
     'p4identify': 
         (   identify,
             [ ('r', 'rev', '',   _('identify the specified revision')),
