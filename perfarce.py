@@ -381,30 +381,31 @@ class p4client:
         
         nodes = repo.changelog.nodesbetween([ctx1.node()], [ctx2.node()])[0][1:]
 
-        # trim off nodes at either end that have already been pushed
-        for end in [0, -1]:
-            while nodes:
-                n = repo[nodes[end]]
+        if not opts['force']:
+            # trim off nodes at either end that have already been pushed
+            for end in [0, -1]:
+                while nodes:
+                    n = repo[nodes[end]]
+                    pending = client.getpending(n.hex())
+                    if (out and pending > 0) or pending == client.SUBMITTED:
+                        del nodes[end]
+                    else:
+                        break
+
+            # check that remaining nodes have not already been pushed
+            for n in nodes:
+                n = repo[n]
+                fail = False
                 pending = client.getpending(n.hex())
                 if (out and pending > 0) or pending == client.SUBMITTED:
-                    del nodes[end]
-                else:
-                    break
-
-        # check that remaining nodes have not already been pushed
-        for n in nodes:
-            n = repo[n]
-            fail = False
-            pending = client.getpending(n.hex())
-            if (out and pending > 0) or pending == client.SUBMITTED:
-                fail = True
-            for ctx3 in n.children():
-                extra = ctx3.extra()
-                if 'p4' in extra:
                     fail = True
-                    break
-            if fail:
-                raise util.Abort(_('can not push, changeset %s is already in p4' % n))
+                for ctx3 in n.children():
+                    extra = ctx3.extra()
+                    if 'p4' in extra:
+                        fail = True
+                        break
+                if fail:
+                    raise util.Abort(_('can not push, changeset %s is already in p4' % n))
 
         # find changed files
         if not nodes:
@@ -441,7 +442,7 @@ class p4client:
                 nodes = self.repo.changelog.nodesbetween(
                     [self.repo[m.group(2)].node()], [self.repo[m.group(4) or m.group(2)].node()])[0]
             except:
-                ui.note(_('ignoring hg revision range %s from p4\n' % m.group(1)))
+                self.ui.note(_('ignoring hg revision range %s from p4\n' % m.group(1)))
         return nodes
 
 
@@ -548,6 +549,9 @@ def pull(original, ui, repo, source=None, **opts):
         ui.note(_('added changeset %d:%s\n') % (ctx.rev(), ctx))
 
     client.close()
+
+    if opts['update']:
+        return hg.update(repo, 'tip')
 
 
 # --------------------------------------------------------------------------

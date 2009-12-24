@@ -26,6 +26,12 @@ else
     }
 fi
 
+DATA=0
+data() {
+   echo $DATA
+   DATA=$((DATA+1))
+}
+
 rm -fr $P4ROOT $PWD/src $PWD/dst $PWD/new || true
 
 echo % start the p4 server
@@ -51,22 +57,22 @@ p4 client -i <p4client-$$
 rm p4client-$$
 
 echo % populate the depot
-echo a > a
+data > a
 mkdir b
-echo c > b/c
+data > b/c
 p4 add a b/c
 p4 submit -d initial
 
 echo % change some files
 p4 edit a
-echo aa >> a
+data >> a
 p4 submit -d "p4 change a"
 
 p4 edit b/c
-echo cc >> b/c
+data >> b/c
 p4 submit -d "p4 change b/c"
 
-echo dd >>b/d
+data >>b/d
 p4 add b/d
 p4 submit -d "p4 add b/d"
 
@@ -92,15 +98,18 @@ echo % nothing outgoing
 hg $HGDEBUG outgoing
 
 echo % change some files in hg
-echo aab >> a
+data >> a
 hg $HGDEBUG commit -m "hg change a"
 
-echo ee >> b/e
+data >> b/e
 hg $HGDEBUG add b/e
 hg $HGDEBUG ci -m "hg add b/e"
 
-echo ddd >>b/d
+data >>b/d
 hg $HGDEBUG commit -m "hg change b/d"
+
+echo % id
+hg $HGDEBUG p4identify
 
 echo % outgoing
 hg $HGDEBUG outgoing | filter
@@ -108,32 +117,51 @@ hg $HGDEBUG outgoing | filter
 echo % skip a changelist
 p4 change -o | sed -r 's/<.+>/test/' >change.$$
 p4 change -d $(p4 change -i <change.$$ | awk '/created/ { print $2 }')
+rm change.$$
 
 echo % push
-# hg $HGDEBUG push --submit 
 hg $HGDEBUG push
-hg $HGDEBUG p4submit 7	
-
+echo % p4stat
 head .hg/p4stat
+
+echo % pending
+hg $HGDEBUG p4pending
+
+echo % submit
+hg $HGDEBUG p4submit
+echo % p4stat
+head .hg/p4stat
+
+echo % pending
+hg $HGDEBUG p4pending
 
 echo % outgoing
 hg $HGDEBUG outgoing | filter
 
 echo % p4 results
 cd ../src
-p4 changes	 | filter
+p4 changes       | filter
 p4 describe -s 7 | filter
 
 cd ../dst
-
-#echo % run bash
-#bash
 
 echo % incoming
 hg $HGDEBUG incoming
 
 echo % pull
-hg $HGDEBUG pull
+hg $HGDEBUG pull -u
 
-hg glog
+hg glog --style=compact
 
+echo % push submit
+data >a
+data >c
+hg add c
+hg ci -m "ac" a c
+hg $HGDEBUG push --submit 
+
+echo % p4stat
+head .hg/p4stat
+
+#echo % run bash
+#bash
