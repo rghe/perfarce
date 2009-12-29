@@ -250,7 +250,6 @@ class p4client:
     def describe(self, change, files=None):
         'Return p4 changelist description and optionally the files affected'
 
-        desc = user = date = None
         d = self.runs('describe -s %d' % change)
         desc = d['desc']
         user = d['user']
@@ -316,6 +315,18 @@ class p4client:
             contents = keywords.sub('$\\1$', contents)
 
         return mode, contents
+
+
+    def labels(self, change):
+        'Return p4 labels a.k.a. tags at the given changelist'
+
+        tags = []
+        for d in self.run('labels @%d,%d' % (change, change)):
+            l = d.get('label')
+            if l:
+                tags.append(l)
+
+        return tags
 
 
     @staticmethod
@@ -409,10 +420,19 @@ class p4client:
 
         # find changed files
         if not nodes:
-            mod = add = rem = None
+            mod = add = rem = []
         else:
+            # remove .hg* files (mainly for .hgtags and .hgignore)
             mod, add, rem = repo.status(node1=ctx1.node(), node2=ctx2.node())[:3]
-        
+            for changes in [mod, add, rem]:
+                i = 0
+                while i < len(changes):
+                    f = changes[i]
+                    if f.startswith('.hg'):
+                        del changes[i]
+                    else:
+                        i += 1
+
         if not (mod or add or rem):
             ui.status(_('no changes found\n'))
             return True, 0
@@ -487,10 +507,12 @@ def incoming(original, ui, repo, source='default', **opts):
     client, p4rev, p4id, changes = r
     for c in changes:
         desc, user, date, files = client.describe(c, files=ui.verbose)
+        tags = client.labels(c)
 
         ui.write(_('changelist:  %d\n') % c)
         # ui.write(_('branch:      %s\n') % branch)
-        # ui.write(_('tag:         %s\n') % tag)
+        for tag in tags:
+            ui.write(_('tag:         %s\n') % tag)
         # ui.write(_('parent:      %d:%s\n') % parent)
         ui.write(_('user:        %s\n') % user)
         ui.write(_('date:        %s\n') % util.datestr(date))
@@ -525,6 +547,7 @@ def pull(original, ui, repo, source=None, **opts):
         mode, contents = client.getfile(revcache[fn], c)
         return context.memfilectx(fn, contents, 'l' in mode, 'x' in mode, None)
 
+    tags = []
     for c in changes:
         desc, user, date, files = client.describe(c, files=True)
 
@@ -546,7 +569,33 @@ def pull(original, ui, repo, source=None, **opts):
 
         p4rev = repo.commitctx(ctx)
         ctx = repo[p4rev]
+
+        labels = client.labels(c)
+        if labels:
+            tags.append((c, ctx.hex(), labels))
+
         ui.note(_('added changeset %d:%s\n') % (ctx.rev(), ctx))
+
+    if tags:
+        if '.hgtags' in ctx:
+            tagdata = ctx.filectx('.hgtags').data()
+        else:
+            tagdata = ''
+
+        desc = ['p4 tags']
+        for t in tags:
+            for l in t[2]:
+                desc.append('   %s @ %d' % (l, t[0]))
+                tagdata += '%s %s\n' % (t[1], l)
+
+        def getfilectx(repo, memctx, fn):
+            'callback to read file data'
+            assert fn=='.hgtags'
+            return context.memfilectx(fn, tagdata, False, False, None)
+
+        ctx = context.memctx(repo, (p4rev, None), '\n'.join(desc),
+                             ['.hgtags'], getfilectx)
+        repo.commitctx(ctx)
 
     client.close()
 
@@ -594,6 +643,12 @@ def push(original, ui, repo, dest=None, **opts):
         if d['desc'] == desc:
             use = d['change']
 
+    # revert any other changes to the files in existing changelist
+    if use:
+        ui.note(_('reverting: %s\n') % ', '.join(mod+add+rem))
+        client.runs('revert -c %s %s' % (use,
+                    ' '.join('"%s"'%f for f in mod + add + rem)), abort=False)
+
     # get changelist data, and update it
     changelist = client.runs('change -o %s' % use)
     changelist['Description'] = desc
@@ -626,10 +681,6 @@ def push(original, ui, repo, dest=None, **opts):
 
     if not use:
         raise util.Abort(_('Did not get changelist number from p4'))
-
-    # revert any other changes to the files
-    ui.note(_('reverting: %s\n') % ', '.join(mod+add+rem))
-    client.runs('revert %s' % (' '.join('"%s"'%f for f in mod + add + rem)), abort=False)
 
     # now add/edit/delete the files
     if mod:

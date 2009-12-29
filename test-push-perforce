@@ -2,11 +2,46 @@
 
 set -e
 
+HELP=0
+DEBUG=0
+SHELL=0
+P4ROOT=$PWD/depot
+
+unset P4CONFIG
+unset P4DIFF
+unset P4EDITOR
+unset P4PASSWD
+unset P4PORT
+unset P4USER
+
+while getopts "dr:s" OPT ; do
+   case "$OPT" in
+      d)
+         DEBUG=1
+         ;;
+      r)
+         P4ROOT=$OPTARG
+         ;;
+      s)
+         SHELL=1
+         ;;
+      \?)
+	 HELP=1
+	 break
+         ;;
+   esac
+done
+
+shift $(($OPTIND-1))
+
+if [ $HELP -ne 0 ] ; then
+   echo "Usage: $0 [-ds] [-r DIR]"
+   exit 1
+fi
+
 echo % create p4 depot
 
-DEBUG=0
-
-P4ROOT=${P4ROOT:-$PWD/depot}; export P4ROOT
+export P4ROOT
 P4AUDIT=$P4ROOT/audit; export P4AUDIT
 P4JOURNAL=$P4ROOT/journal; export P4JOURNAL
 P4LOG=$P4ROOT/log; export P4LOG
@@ -62,6 +97,7 @@ mkdir b
 data > b/c
 p4 add a b/c
 p4 submit -d initial
+p4 tag -l change-one ...
 
 echo % change some files
 p4 edit a
@@ -75,6 +111,7 @@ p4 submit -d "p4 change b/c"
 data >>b/d
 p4 add b/d
 p4 submit -d "p4 add b/d"
+p4 tag -l change-four ...
 
 p4 delete b/c
 p4 submit -d "p4 delete b/c"
@@ -86,6 +123,9 @@ hg $HGDEBUG convert -s p4 $DEPOTPATH dst
 
 echo "[paths]" >>dst/.hg/hgrc
 echo "default = p4://$P4PORT/$P4CLIENT" >>dst/.hg/hgrc
+
+echo "[extensions]" >>dst/.hg/hgrc
+echo "perfarce = $PWD/perfarce.py" >>dst/.hg/hgrc
 
 echo % now work in hg
 cd dst
@@ -143,6 +183,8 @@ cd ../src
 p4 changes       | filter
 p4 describe -s 7 | filter
 
+p4 tag -l change-seven ...
+
 cd ../dst
 
 echo % incoming
@@ -163,5 +205,13 @@ hg $HGDEBUG push --submit
 echo % p4stat
 head .hg/p4stat
 
-#echo % run bash
-#bash
+echo % hg tag
+hg $HGDEBUG pull -u
+hg tag -r 5 tag-created-in-hg
+
+hg $HGDEBUG push
+
+if [ $SHELL -ne 0 ] ; then
+   echo % run bash
+   bash
+fi
