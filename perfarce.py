@@ -15,7 +15,7 @@ The client specification must already exist on the server before using
 this extension. Making changes to the client specification Views causes
 problems when synchronizing the repositories, and should be avoided.
 
-Four built-in commands are overridden:
+Five built-in commands are overridden:
 
     hg outgoing: If the destination repository name starts with p4:// then this
                  reports files affected by the revision(s) that are in the
@@ -45,31 +45,36 @@ Four built-in commands are overridden:
                  reports changes in the p4 depot that are not yet in the
                  local repository.
 
-Two additional commands are implemented:
+    hg clone:    If the source repository name starts with p4:// then this
+                 creates the destination repository and pulls all changes
+                 from the p4 depot into it.
 
-    hg p4submit:   Submit a changelist to the p4 depot, then pull the latest
-                   changes from the p4 depot. 
+Three additional commands are implemented:
 
     hg p4identify: Show the most recent revision that was imported from p4.
+
+    hg p4pending:  Show the changelists that have already been pushed and those
+                   that are pending for submit in p4
+
+    hg p4submit:   Submit a changelist to the p4 depot, then pull the latest
+                   changes from the p4 depot.
 '''
 
 from mercurial import cmdutil, commands, context, extensions, hg, util
 from mercurial.i18n import _
 from hgext.convert.p4 import loaditer
 
-from hgext.convert.hg import mercurial_sink
-from hgext.convert.convcmd import converter
-
 import marshal, tempfile, os, re
 
 def uisetup(ui):
     '''monkeypatch pull and push for p4:// support'''
-    
+
     extensions.wrapcommand(commands.table, 'pull', pull)
     p = extensions.wrapcommand(commands.table, 'push', push)
     p[1].append(('', 'submit', None, 'for p4:// destination submit new changelist to server'))
     extensions.wrapcommand(commands.table, 'incoming', incoming)
     extensions.wrapcommand(commands.table, 'outgoing', outgoing)
+    extensions.wrapcommand(commands.table, 'clone', clone)
 
 # --------------------------------------------------------------------------
 
@@ -89,6 +94,7 @@ class p4client:
             self.keep = ui.configbool('perfarce', 'keep', True)
 
             # caches
+            self.usercache = {}
             self.wherecache = {}
             self.p4stat = None
             self.p4statdirty = False
@@ -101,8 +107,6 @@ class p4client:
             self.re_number = re.compile('.+ ([0-9]+) .+')
             self.actions = { 'edit':'M', 'add':'A', 'delete':'R', 'branch':'A', 'integrate':'M' }
 
-            self.authors = {}
-
             s, c = path[5:].split('/')
             if ':' not in s:
                 s = '%s:1666' % s
@@ -113,11 +117,16 @@ class p4client:
                     if n in d and os.path.isdir(d[n]):
                         self.root = util.pconvert(d[n])
                         break
+                if not self.root:
+                    ui.note(_('the p4 client root must exist\n'))
+                    assert False
+
                 self.client=c
         except:
+            ui.traceback()
             raise util.Abort(_('not a p4 repository'))
 
-    
+
     def close(self):
         'clean up any client state'
         if self.p4statdirty:
@@ -148,10 +157,11 @@ class p4client:
             if p4type.group(2) == 'symlink':
                 mode = 'l'
             if 'ko' in flags:
-                keywords = re_keywords_old
+                keywords = self.re_keywords_old
             elif 'k' in flags:
-                keywords = re_keywords
+                keywords = self.re_keywords
         return mode, keywords
+
 
     SUBMITTED = 'submitted'
     def getpending(self, node):
@@ -190,6 +200,7 @@ class p4client:
                     state = int(line[1])
                 self.p4stat[line[0]] = state
         except:
+            self.ui.traceback()
             self.ui.note('error reading p4stat')
         self.ui.debug('read p4stat=%r\n' % self.p4stat)
         self.p4statdirty = False
@@ -204,7 +215,8 @@ class p4client:
         self.ui.debug('write p4stat=%r\n' % self.p4stat)
 
 
-    def run(self, cmd, abort=True):
+    MAXARGS = 100
+    def run(self, cmd, files=[], abort=True):
         'Run a P4 command and yield the objects returned'
 
         c = ['p4', '-G']
@@ -215,31 +227,34 @@ class p4client:
             c.append('-c')
             c.append(self.client)
         c.append(cmd)
-        cmd = ' '.join(c)
 
-        if self.ui.debugflag: self.ui.debug('> %s\n'%cmd)
         old=os.getcwd()
         try:
             if self.root:
                 os.chdir(self.root)
-            for d in loaditer(util.popen(cmd, mode='rb')):
-                if self.ui.debugflag: self.ui.debug('< %r\n'%d)
-                code = d.get('code')
-                data = d.get('data')
-                if code is not None and data is not None:
-                    if abort and code == 'error':
-                        raise util.Abort(d['generic'], 'p4: %s' % data)
-                    elif code == 'info':
-                        self.ui.note('p4: %s\n' % data)
-                yield d
+
+            for i in range(0, len(files), self.MAXARGS) or [0]:
+                cs = ' '.join(c + [('"%s"' % f) for f in files[i:i + self.MAXARGS]])
+                if self.ui.debugflag: self.ui.debug('> %s\n'%cs)
+
+                for d in loaditer(util.popen(cs, mode='rb')):
+                    if self.ui.debugflag: self.ui.debug('< %r\n'%d)
+                    code = d.get('code')
+                    data = d.get('data')
+                    if code is not None and data is not None:
+                        if abort and code == 'error':
+                            raise util.Abort('p4: %s' % data)
+                        elif code == 'info':
+                            self.ui.note('p4: %s\n' % data)
+                    yield d
         finally:
             os.chdir(old)
 
 
-    def runs(self, cmd, abort=True):
+    def runs(self, cmd, **args):
         'Run a P4 command and return first object, or False if more, or None'
         r = None
-        for d in self.run(cmd, abort):
+        for d in self.run(cmd, **args):
             if r is None:
                 r = d
             else:
@@ -247,31 +262,45 @@ class p4client:
         return r
 
 
+    def getuser(self, user):
+        'get full name and email address of user'
+        r = self.usercache.get(user)
+        if r:
+            return r
+
+        d = self.runs('user -o "%s"' % user, abort=False)
+        if 'Update' in d:
+            try:
+                return '%s <%s>' % (d['FullName'], d['Email'])
+            except:
+                pass
+        return user
+
+
     def describe(self, change, files=None):
         'Return p4 changelist description and optionally the files affected'
 
         d = self.runs('describe -s %d' % change)
         desc = d['desc']
-        user = d['user']
-        if user in self.authors:
-            user = self.authors[user]
+        user = self.getuser(d['user'])
         date = (int(d['time']), 0)     # p4 uses UNIX epoch
 
         if files:
             files = []
-            i = 0
-            while ('depotFile%d' % i) in d and ('rev%d' % i) in d:
-                df = d['depotFile%d' % i]
-                if df in self.wherecache:
-                    lf = self.wherecache[df]
-                else:
-                    where = self.runs('where "%s"' % df, abort=False)
+            args = {}
+
+            def batch(files, args):
+                'helper to reduce the number of calls to p4 where'
+                for where in self.run('where', files=[f for f in args], abort=False):
                     if where['code'] == 'error':
-                        if where['data'].endswith('file(s) not in client view.\n'):
-                            i += 1
+                        if where['severity'] == 2 and where['generic'] == 17:
+                            # file not in client view
                             continue
                         else:
                             raise util.Abort(where['data'])
+                    if 'unmap' in where:
+                        continue
+                    df = where['depotFile']
                     lf = where['path']
                     lf = util.pconvert(lf)
                     if lf.startswith('%s/' % self.root):
@@ -279,16 +308,36 @@ class p4client:
                     else:
                         raise util.Abort(_('invalid p4 local path %s') % lf)
                     self.wherecache[df] = lf
+
+                    rev, type, action = args[df]
+                    files.append((df, lf, rev, type, action))
+                args.clear()
+
+            i = 0
+            while ('depotFile%d' % i) in d and ('rev%d' % i) in d:
+                df = d['depotFile%d' % i]
                 action = self.actions[d['action%d' % i]]
-                files.append((df, lf, d['rev%d' % i], d['type%d' % i], action))
+
+                if df in self.wherecache:
+                    lf = self.wherecache[df]
+                    files.append((df, lf, d['rev%d' % i], d['type%d' % i], action))
+                else:
+                    args[df] = d['rev%d' % i], d['type%d' % i], action
+
+                    if len(args) >= self.MAXARGS:
+                        batch(files, args)
                 i += 1
+
+            if args:
+                batch(files, args)
+
 
         return desc, user, date, files
 
 
     def getfile(self, filet, change):
         'Return contents of a file in the p4 depot at the given change number'
-        
+
         mode, keywords = self.decodetype(filet[3])
 
         if self.keep:
@@ -338,6 +387,7 @@ class p4client:
         try:
             client = p4client(ui, repo, source)
         except:
+            ui.traceback()
             return True, original(ui, repo, source, **opts)
 
         if len(repo):
@@ -353,14 +403,6 @@ class p4client:
                 changes.append(c)
         changes.sort()
 
-        # we create a temporary converter sink here to get the author mapping
-        sink = mercurial_sink(ui, repo.root)
-        cvt = converter(ui, None, sink, sink.revmapfile(), {})
-        authorfile = sink.authorfile()
-        if authorfile and os.path.exists(authorfile):
-            cvt.readauthormap(authorfile)
-        client.authors = cvt.authors
-
         return False, (client, p4rev, p4id, changes)
 
 
@@ -373,6 +415,7 @@ class p4client:
         try:
             client = p4client(ui, repo, dest)
         except:
+            ui.traceback()
             return True, original(ui, repo, dest, **opts)
 
         p4rev, p4id = client.latest()
@@ -389,7 +432,7 @@ class p4client:
                 ctx1 = ctx2.parents()[0]
         else:
             ctx2 = repo['tip']
-        
+
         nodes = repo.changelog.nodesbetween([ctx1.node()], [ctx2.node()])[0][1:]
 
         if not opts['force']:
@@ -462,12 +505,13 @@ class p4client:
                 nodes = self.repo.changelog.nodesbetween(
                     [self.repo[m.group(2)].node()], [self.repo[m.group(4) or m.group(2)].node()])[0]
             except:
+                self.ui.traceback()
                 self.ui.note(_('ignoring hg revision range %s from p4\n' % m.group(1)))
         return nodes
 
 
     def submit(self, nodes, change, files):
-        '''submit one changelist to p4, mark nodes in p4stat and optionally 
+        '''submit one changelist to p4, mark nodes in p4stat and optionally
         delete the files added or modified in the p4 workarea'''
 
         cl = None
@@ -492,7 +536,7 @@ class p4client:
                     os.chmod(out, mode)
                     os.unlink(out)
                 except:
-                    pass
+                    self.ui.traceback()
 
 
 # --------------------------------------------------------------------------
@@ -548,59 +592,106 @@ def pull(original, ui, repo, source=None, **opts):
         return context.memfilectx(fn, contents, 'l' in mode, 'x' in mode, None)
 
     tags = []
-    for c in changes:
-        desc, user, date, files = client.describe(c, files=True)
 
-        revcache = dict((f[1],f) for f in files)
+    try:
+        for c in changes:
+            desc, user, date, files = client.describe(c, files=True)
 
-        nodes = client.parsenodes(desc)
-        if nodes:
-            parent = nodes[-1]
-        else:
-            parent = None
+            revcache = dict((f[1],f) for f in files)
 
-        ctx = context.memctx(repo, (p4rev, parent), desc, 
-                             [f[1] for f in files], getfilectx,
-                             user, date, {'p4':c})
+            nodes = client.parsenodes(desc)
+            if nodes:
+                parent = nodes[-1]
+            else:
+                parent = None
 
-        if nodes:
-            for n in nodes:
-                client.setpending(repo[n].hex(), None)
+            ctx = context.memctx(repo, (p4rev, parent), desc,
+                                 [f[1] for f in files], getfilectx,
+                                 user, date, {'p4':c})
 
-        p4rev = repo.commitctx(ctx)
-        ctx = repo[p4rev]
+            if nodes:
+                for n in nodes:
+                    client.setpending(repo[n].hex(), None)
 
-        labels = client.labels(c)
-        if labels:
-            tags.append((c, ctx.hex(), labels))
+            p4rev = repo.commitctx(ctx)
+            ctx = repo[p4rev]
 
-        ui.note(_('added changeset %d:%s\n') % (ctx.rev(), ctx))
+            labels = client.labels(c)
+            if labels:
+                tags.append((c, ctx.hex(), labels))
 
-    if tags:
-        if '.hgtags' in ctx:
-            tagdata = ctx.filectx('.hgtags').data()
-        else:
-            tagdata = ''
+            ui.note(_('added changeset %d:%s\n') % (ctx.rev(), ctx))
 
-        desc = ['p4 tags']
-        for t in tags:
-            for l in t[2]:
-                desc.append('   %s @ %d' % (l, t[0]))
-                tagdata += '%s %s\n' % (t[1], l)
+    finally:
+        if tags:
+            if '.hgtags' in ctx:
+                tagdata = ctx.filectx('.hgtags').data()
+            else:
+                tagdata = ''
 
-        def getfilectx(repo, memctx, fn):
-            'callback to read file data'
-            assert fn=='.hgtags'
-            return context.memfilectx(fn, tagdata, False, False, None)
+            desc = ['p4 tags']
+            for t in tags:
+                for l in t[2]:
+                    desc.append('   %s @ %d' % (l, t[0]))
+                    tagdata += '%s %s\n' % (t[1], l)
 
-        ctx = context.memctx(repo, (p4rev, None), '\n'.join(desc),
-                             ['.hgtags'], getfilectx)
-        repo.commitctx(ctx)
+            def getfilectx(repo, memctx, fn):
+                'callback to read file data'
+                assert fn=='.hgtags'
+                return context.memfilectx(fn, tagdata, False, False, None)
+
+            ctx = context.memctx(repo, (p4rev, None), '\n'.join(desc),
+                                 ['.hgtags'], getfilectx)
+            repo.commitctx(ctx)
 
     client.close()
 
     if opts['update']:
         return hg.update(repo, 'tip')
+
+
+def clone(original, ui, source, dest=None, **opts):
+    '''Wrap the clone command to look for p4 source paths, do pull'''
+
+    try:
+        client = p4client(ui, None, source)
+    except:
+        ui.traceback()
+        return original(ui, source, dest, **opts)
+
+    if dest is None:
+        dest = hg.defaultdest(source)
+        ui.status(_("destination directory: %s\n") % dest)
+    else:
+        dest = ui.expandpath(dest)
+    dest = hg.localpath(dest)
+
+    if not hg.islocal(dest):
+        raise util.Abort(_("destination '%s' must be local") % dest)
+
+    if os.path.exists(dest):
+        if not os.path.isdir(dest):
+            raise util.Abort(_("destination '%s' already exists") % dest)
+        elif os.listdir(dest):
+            raise util.Abort(_("destination '%s' is not empty") % dest)
+
+    repo = hg.repository(ui, dest, create=True)
+
+    opts['update'] = not opts['noupdate']
+    opts['force'] = opts['rev'] = None
+
+    r = pull(None, ui, repo, source=source, **opts)
+
+    if not r:
+        fp = repo.opener("hgrc", "w", text=True)
+        fp.write("[paths]\n")
+        fp.write("default = %s\n" % source)
+        fp.write("\n[perfarce]\n")
+        fp.write("keep = %s\n" % client.keep)
+
+        fp.close()
+
+    return r
 
 
 # --------------------------------------------------------------------------
@@ -646,8 +737,7 @@ def push(original, ui, repo, dest=None, **opts):
     # revert any other changes to the files in existing changelist
     if use:
         ui.note(_('reverting: %s\n') % ', '.join(mod+add+rem))
-        client.runs('revert -c %s %s' % (use,
-                    ' '.join('"%s"'%f for f in mod + add + rem)), abort=False)
+        client.runs('revert -c %s' % use, files=mod + add + rem, abort=False)
 
     # get changelist data, and update it
     changelist = client.runs('change -o %s' % use)
@@ -676,7 +766,7 @@ def push(original, ui, repo, dest=None, **opts):
     finally:
         try:
             if fn: os.unlink(fn)
-        except: 
+        except:
             pass
 
     if not use:
@@ -685,14 +775,14 @@ def push(original, ui, repo, dest=None, **opts):
     # now add/edit/delete the files
     if mod:
         ui.note(_('opening for edit: %s\n') % ' '.join(mod))
-        client.runs('edit -c %s %s' % (use, ' '.join('"%s"'%f for f in mod)))
+        client.runs('edit -c %s' % use, files=mod)
 
     if mod or add:
         ui.note(_('Retrieving file contents...\n'))
         m = cmdutil.match(repo, mod+add, opts={})
         for abs in ctx2.walk(m):
             out = os.path.join(client.root, abs)
-            if ui.debugflag: ui.debug(_('writing: %s\n') % out)
+            ui.debug(_('writing: %s\n') % out)
             util.makedirs(os.path.dirname(out))
             fp = cmdutil.make_file(repo, out, ctx2.node(), pathname=abs)
             data = ctx2[abs].data()
@@ -701,11 +791,11 @@ def push(original, ui, repo, dest=None, **opts):
 
     if add:
         ui.note(_('opening for add: %s\n') % ' '.join(add))
-        client.runs('add -c %s %s' % (use, ' '.join('"%s"'%f for f in add)))
+        client.runs('add -c %s' % use, files=add)
 
     if rem:
         ui.note(_('opening for delete: %s\n') % ' '.join(rem))
-        client.runs('delete -c %s %s' % (use, ' '.join('"%s"'%f for f in rem)))
+        client.runs('delete -c %s' % use, files=rem)
 
     # submit the changelist to perforce if --submit was given
     if opts['submit'] or ui.configbool('perfarce', 'submit', default=False):
@@ -725,7 +815,7 @@ def submit(ui, repo, change=None, dest=None, **opts):
 
     dest, revs, co = hg.parseurl(ui.expandpath(dest or 'default-push',
                                                dest or 'default'))
-    
+
     client = p4client(ui, repo, dest)
     if change:
         change = int(change)
@@ -747,7 +837,7 @@ def submit(ui, repo, change=None, dest=None, **opts):
     desc, user, date, files = client.describe(change, files=True)
     nodes = client.parsenodes(desc)
 
-    client.submit(nodes, change, files)
+    client.submit(nodes, change, (f[0] for f in files))
     client.close()
 
 
@@ -756,7 +846,7 @@ def pending(ui, repo, dest=None, **opts):
 
     dest, revs, co = hg.parseurl(ui.expandpath(dest or 'default-push',
                                                dest or 'default'))
-    
+
     client = p4client(ui, repo, dest)
 
     changes = {}
@@ -811,19 +901,19 @@ def identify(ui, repo, *args, **opts):
         output.append(str(ctx))
 
     ui.write("%s\n" % ' '.join(output))
-    
+
 
 cmdtable = {
     # 'command-name': (function-call, options-list, help-string)
-    'p4submit': 
+    'p4submit':
         (   submit,
             [ ],
             'hg p4submit changelist [p4://server/client]'),
-    'p4pending': 
+    'p4pending':
         (   pending,
             [ ],
             'hg p4pending [p4://server/client]'),
-    'p4identify': 
+    'p4identify':
         (   identify,
             [ ('r', 'rev', '',   _('identify the specified revision')),
               ('n', 'num', None, _('show local revision number')),
