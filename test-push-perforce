@@ -4,15 +4,8 @@ set -e
 
 HELP=0
 DEBUG=0
-SHELL=0
+DOSHELL=0
 P4ROOT=$PWD/depot
-
-unset P4CONFIG
-unset P4DIFF
-unset P4EDITOR
-unset P4PASSWD
-unset P4PORT
-unset P4USER
 
 while getopts "dr:s" OPT ; do
    case "$OPT" in
@@ -23,7 +16,7 @@ while getopts "dr:s" OPT ; do
          P4ROOT=$OPTARG
          ;;
       s)
-         SHELL=1
+         DOSHELL=1
          ;;
       \?)
 	 HELP=1
@@ -47,6 +40,11 @@ P4JOURNAL=$P4ROOT/journal; export P4JOURNAL
 P4LOG=$P4ROOT/log; export P4LOG
 P4PORT=localhost:16661; export P4PORT
 P4DEBUG=$DEBUG; export P4DEBUG
+unset P4CONFIG
+unset P4DIFF
+unset P4EDITOR
+unset P4PASSWD
+unset P4USER
 
 if [ $DEBUG -ne 0 ] ; then
     HGDEBUG=--debug
@@ -72,7 +70,17 @@ rm -fr $P4ROOT $PWD/src $PWD/dst $PWD/new || true
 echo % start the p4 server
 [ ! -d $P4ROOT ] && mkdir $P4ROOT
 p4d -f -J off >$P4ROOT/stdout 2>$P4ROOT/stderr &
-trap "echo % stop the p4 server ; p4 admin stop" EXIT
+
+export DOSHELL
+cleanup() {
+    if [ $DOSHELL -ne 0 ] ; then
+        echo % run bash
+        bash
+    fi
+    echo % stop the p4 server
+    p4 admin stop
+}
+trap cleanup EXIT
 
 # wait for the server to initialize
 while ! p4 ; do
@@ -126,6 +134,9 @@ echo "default = p4://$P4PORT/$P4CLIENT" >>dst/.hg/hgrc
 
 echo "[extensions]" >>dst/.hg/hgrc
 echo "perfarce = $PWD/perfarce.py" >>dst/.hg/hgrc
+
+echo "[perfarce]" >>dst/.hg/hgrc
+echo "keep = false" >>dst/.hg/hgrc
 
 echo % now work in hg
 cd dst
@@ -211,7 +222,4 @@ hg tag -r 5 tag-created-in-hg
 
 hg $HGDEBUG push
 
-if [ $SHELL -ne 0 ] ; then
-   echo % run bash
-   bash
-fi
+# EOF

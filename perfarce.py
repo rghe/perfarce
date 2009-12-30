@@ -107,6 +107,14 @@ class p4client:
             self.re_number = re.compile('.+ ([0-9]+) .+')
             self.actions = { 'edit':'M', 'add':'A', 'delete':'R', 'branch':'A', 'integrate':'M' }
 
+            maxargs = ui.config('perfarce', 'maxargs')
+            if maxargs:
+               self.MAXARGS = int(maxargs)
+            elif os.name == 'posix':
+               self.MAXARGS = 250
+            else:
+               self.MAXARGS = 25
+
             s, c = path[5:].split('/')
             if ':' not in s:
                 s = '%s:1666' % s
@@ -201,7 +209,7 @@ class p4client:
                 self.p4stat[line[0]] = state
         except:
             self.ui.traceback()
-            self.ui.note('error reading p4stat')
+            self.ui.note('error reading p4stat\n')
         self.ui.debug('read p4stat=%r\n' % self.p4stat)
         self.p4statdirty = False
 
@@ -215,7 +223,6 @@ class p4client:
         self.ui.debug('write p4stat=%r\n' % self.p4stat)
 
 
-    MAXARGS = 100
     def run(self, cmd, files=[], abort=True):
         'Run a P4 command and yield the objects returned'
 
@@ -235,10 +242,10 @@ class p4client:
 
             for i in range(0, len(files), self.MAXARGS) or [0]:
                 cs = ' '.join(c + [('"%s"' % f) for f in files[i:i + self.MAXARGS]])
-                if self.ui.debugflag: self.ui.debug('> %s\n'%cs)
+                if self.ui.debugflag: self.ui.debug('> %s\n' % cs)
 
                 for d in loaditer(util.popen(cs, mode='rb')):
-                    if self.ui.debugflag: self.ui.debug('< %r\n'%d)
+                    if self.ui.debugflag: self.ui.debug('< %r\n' % d)
                     code = d.get('code')
                     data = d.get('data')
                     if code is not None and data is not None:
@@ -271,7 +278,9 @@ class p4client:
         d = self.runs('user -o "%s"' % user, abort=False)
         if 'Update' in d:
             try:
-                return '%s <%s>' % (d['FullName'], d['Email'])
+                r = '%s <%s>' % (d['FullName'], d['Email'])
+                self.usercache[user] = r
+                return r
             except:
                 pass
         return user
@@ -291,26 +300,34 @@ class p4client:
 
             def batch(files, args):
                 'helper to reduce the number of calls to p4 where'
-                for where in self.run('where', files=[f for f in args], abort=False):
+                flist = sorted(f for f in args)
+                n = len(flist)
+                for where in self.run('where', files=flist, abort=False):
+                    n -= 1
                     if where['code'] == 'error':
                         if where['severity'] == 2 and where['generic'] == 17:
                             # file not in client view
                             continue
                         else:
                             raise util.Abort(where['data'])
-                    if 'unmap' in where:
-                        continue
+                    
                     df = where['depotFile']
-                    lf = where['path']
-                    lf = util.pconvert(lf)
-                    if lf.startswith('%s/' % self.root):
-                        lf = lf[len(self.root) + 1:]
+                    if 'unmap' in where:
+                        self.wherecache[df] = None
                     else:
-                        raise util.Abort(_('invalid p4 local path %s') % lf)
-                    self.wherecache[df] = lf
+                        lf = where['path']
+                        lf = util.pconvert(lf)
+                        if lf.startswith('%s/' % self.root):
+                            lf = lf[len(self.root) + 1:]
+                        else:
+                            raise util.Abort(_('invalid p4 local path %s') % lf)
+                        self.wherecache[df] = lf
 
-                    rev, type, action = args[df]
-                    files.append((df, lf, rev, type, action))
+                        rev, type, action = args[df]
+                        files.append((df, lf, rev, type, action))
+
+                if n:
+                    raise util.Abort(_('incomplete reply from p4, reduce maxargs'))
                 args.clear()
 
             i = 0
@@ -320,7 +337,8 @@ class p4client:
 
                 if df in self.wherecache:
                     lf = self.wherecache[df]
-                    files.append((df, lf, d['rev%d' % i], d['type%d' % i], action))
+                    if lf is not None:
+                        files.append((df, lf, d['rev%d' % i], d['type%d' % i], action))
                 else:
                     args[df] = d['rev%d' % i], d['type%d' % i], action
 
@@ -331,7 +349,6 @@ class p4client:
             if args:
                 batch(files, args)
 
-
         return desc, user, date, files
 
 
@@ -341,7 +358,6 @@ class p4client:
         mode, keywords = self.decodetype(filet[3])
 
         if self.keep:
-
             self.runs('sync "%s"@%s' % (filet[0], change), abort=False)
             fn = os.sep.join([self.root, filet[1]])
             fn = util.localpath(fn)
@@ -370,7 +386,7 @@ class p4client:
         'Return p4 labels a.k.a. tags at the given changelist'
 
         tags = []
-        for d in self.run('labels @%d,%d' % (change, change)):
+        for d in self.run('labels ...@%d,%d' % (change, change)):
             l = d.get('label')
             if l:
                 tags.append(l)
@@ -465,8 +481,8 @@ class p4client:
         if not nodes:
             mod = add = rem = []
         else:
-            # remove .hg* files (mainly for .hgtags and .hgignore)
             mod, add, rem = repo.status(node1=ctx1.node(), node2=ctx2.node())[:3]
+            # remove .hg* files (mainly for .hgtags and .hgignore)
             for changes in [mod, add, rem]:
                 i = 0
                 while i < len(changes):
@@ -527,16 +543,7 @@ class p4client:
 
         if files and not self.keep:
             # delete the files in the p4 client directory
-            for f in files:
-                out = os.path.join(self.root, f)
-                try:
-                    mode = os.stat(out)[0]
-                    mode |= (mode & 0444) >> 1
-                    self.ui.note(_('deleting: %s\n') % out)
-                    os.chmod(out, mode)
-                    os.unlink(out)
-                except:
-                    self.ui.traceback()
+            self.runs('sync ...@0', abort=False)
 
 
 # --------------------------------------------------------------------------
@@ -586,6 +593,10 @@ def pull(original, ui, repo, source=None, **opts):
     revcache = {}
     c = 0
 
+    if client.keep:
+       # tell te server we have no files
+       client.runs('sync -k ...@0', abort=False)
+
     def getfilectx(repo, memctx, fn):
         'callback to read file data'
         mode, contents = client.getfile(revcache[fn], c)
@@ -613,13 +624,14 @@ def pull(original, ui, repo, source=None, **opts):
                 for n in nodes:
                     client.setpending(repo[n].hex(), None)
 
-            p4rev = repo.commitctx(ctx)
-            ctx = repo[p4rev]
+            newrev = repo.commitctx(ctx)
+            ctx = repo[newrev]
 
             labels = client.labels(c)
             if labels:
                 tags.append((c, ctx.hex(), labels))
 
+            p4rev = newrev
             ui.note(_('added changeset %d:%s\n') % (ctx.rev(), ctx))
 
     finally:
@@ -723,10 +735,10 @@ def push(original, ui, repo, dest=None, **opts):
 
     # sync to the last revision pulled/converted
     if client.keep:
-        k = ''
+        client.runs('sync ...@%d' % p4id, abort=False)
     else:
-        k = '-k'
-    client.runs('sync %s @%d' % (k, p4id), abort=False)
+        client.runs('sync -k ...@%d' % p4id, abort=False)
+        client.runs('sync -f', files=[('%s@%d' % (f, p4id)) for f in mod], abort=False)
 
     # attempt to reuse an existing changelist
     use = ''
@@ -779,7 +791,7 @@ def push(original, ui, repo, dest=None, **opts):
 
     if mod or add:
         ui.note(_('Retrieving file contents...\n'))
-        m = cmdutil.match(repo, mod+add, opts={})
+        m = cmdutil.match(repo, mod + add, opts={})
         for abs in ctx2.walk(m):
             out = os.path.join(client.root, abs)
             ui.debug(_('writing: %s\n') % out)
