@@ -172,16 +172,16 @@ rm change.$$
 
 echo % push
 hg $HGDEBUG push
-echo % p4stat
-head .hg/p4stat
+echo % p4pending
+hg $HGDEBUG p4pending
 
 echo % pending
 hg $HGDEBUG p4pending
 
 echo % submit
-hg $HGDEBUG p4submit
-echo % p4stat
-head .hg/p4stat
+hg $HGDEBUG p4submit -a
+echo % echo % p4pending
+hg $HGDEBUG p4pending
 
 echo % pending
 hg $HGDEBUG p4pending
@@ -213,8 +213,8 @@ hg add c
 hg ci -m "ac" a c
 hg $HGDEBUG push --submit 
 
-echo % p4stat
-head .hg/p4stat
+echo % echo % p4pending
+hg $HGDEBUG p4pending
 
 echo % hg tag
 hg $HGDEBUG pull -u

@@ -21,10 +21,11 @@ Five built-in commands are overridden:
                  reports files affected by the revision(s) that are in the
                  local repository but not in the p4 depot.
 
-    hg push:     Now can export changes from the local repository to the p4
-                 depot. If no revision is specified then all changes since the
-                 last p4 changelist are pushed. In either case, all revisions
-                 to be pushed are foled into a single p4 changelist. Optionally
+    hg push:     If the destination repository name starts with p4:// then this
+                 export changes from the local repository to the p4 depot. If no
+                 revision is specified then all changes since the last p4 
+                 changelist are pushed. In either case, all revisions to be 
+                 pushed are foled into a single p4 changelist. Optionally
                  the resulting changelist is submitted to the p4 server,
                  controlled by the --submit option to push, or by setting
                     --config perfarce.submit=True
@@ -33,8 +34,9 @@ Five built-in commands are overridden:
                  is False then after a successful submit the files in the
                  p4 workarea will be deleted.
 
-    hg pull:     Now can import changes from the p4 depot, automatically
-                 creating merges of changelists submitted by hg push.
+    hg pull:     If the source repository name starts with p4:// then this
+                 imports changes from the p4 depot, automatically creating
+                 merges of changelists submitted by hg push.
                  If the option
                     --config perfarce.keep=False
                  is False then the import does not leave files in the p4
@@ -49,15 +51,6 @@ Five built-in commands are overridden:
                  creates the destination repository and pulls all changes
                  from the p4 depot into it.
 
-Three additional commands are implemented:
-
-    hg p4identify: Show the most recent revision that was imported from p4.
-
-    hg p4pending:  Show the changelists that have already been pushed and those
-                   that are pending for submit in p4
-
-    hg p4submit:   Submit a changelist to the p4 depot, then pull the latest
-                   changes from the p4 depot.
 '''
 
 from mercurial import cmdutil, commands, context, extensions, hg, util
@@ -171,7 +164,7 @@ class p4client:
         return mode, keywords
 
 
-    SUBMITTED = 'submitted'
+    SUBMITTED = -1
     def getpending(self, node):
         '''return p4 submission state for node: SUBMITTED, a changelist
         number if pending or None if not in a changelist'''
@@ -217,7 +210,12 @@ class p4client:
         'write .hg/p4stat file'
         fd = self.repo.opener('p4stat', 'w', text=True)
         for n in self.p4stat:
-            fd.write('%s %s\n' % (n, self.p4stat[n]))
+            state = self.p4stat[n]
+            if state == self.SUBMITTED:
+                state = 'submitted'
+            else:
+                state = str(state)
+            fd.write('%s %s\n' % (n, state))
         fd.close()
         self.p4statdirty = False
         self.ui.debug('write p4stat=%r\n' % self.p4stat)
@@ -250,7 +248,7 @@ class p4client:
                     data = d.get('data')
                     if code is not None and data is not None:
                         if abort and code == 'error':
-                            raise util.Abort('p4: %s' % data)
+                            raise util.Abort('p4: %s' % data.strip())
                         elif code == 'info':
                             self.ui.note('p4: %s\n' % data)
                     yield d
@@ -449,6 +447,7 @@ class p4client:
             n1, n2 = cmdutil.revpair(repo, rev)
             if n2:
                 ctx1 = repo[n1]
+                ctx1 = ctx1.parents()[0]
                 ctx2 = repo[n2]
             else:
                 ctx2 = repo[n1]
@@ -460,21 +459,28 @@ class p4client:
 
         if not opts['force']:
             # trim off nodes at either end that have already been pushed
+            trim = False
             for end in [0, -1]:
                 while nodes:
                     n = repo[nodes[end]]
                     pending = client.getpending(n.hex())
-                    if (out and pending > 0) or pending == client.SUBMITTED:
+                    if pending is not None:
                         del nodes[end]
+                        trim = True
                     else:
                         break
+
+            # recalculate the context
+            if trim and nodes:
+                ctx1 = repo[nodes[0]].parents()[0]
+                ctx2 = repo[nodes[-1]]
 
             # check that remaining nodes have not already been pushed
             for n in nodes:
                 n = repo[n]
                 fail = False
                 pending = client.getpending(n.hex())
-                if (out and pending > 0) or pending == client.SUBMITTED:
+                if pending is not None:
                     fail = True
                 for ctx3 in n.children():
                     extra = ctx3.extra()
@@ -759,13 +765,13 @@ def push(original, ui, repo, dest=None, **opts):
 
     # attempt to reuse an existing changelist
     use = ''
-    for d in client.run('changes -s pending -l'):
+    for d in client.run('changes -s pending -c %s -l' % client.client):
         if d['desc'] == desc:
             use = d['change']
 
     # revert any other changes to the files in existing changelist
     if use:
-        ui.note(_('reverting: %s\n') % ', '.join(mod+add+rem))
+        ui.note(_('reverting: %s\n') % ' '.join(mod+add+rem))
         client.runs('revert -c %s' % use, files=mod + add + rem, abort=False)
 
     # get changelist data, and update it
@@ -784,7 +790,8 @@ def push(original, ui, repo, dest=None, **opts):
         d = client.runs('change -i <"%s"' % fn)
         data = d['data']
         if d['code'] == 'info':
-            ui.status('p4: %s\n' % data)
+            if not ui.verbose:
+                ui.status('p4: %s\n' % data)
             if not use:
                 m = client.re_number.match(data)
                 if m:
@@ -840,7 +847,8 @@ def push(original, ui, repo, dest=None, **opts):
 # --------------------------------------------------------------------------
 
 def submit(ui, repo, change=None, dest=None, **opts):
-    '''do a p4 submit and update the repository state'''
+    '''submit a changelist to the p4 depot
+    then update the local repository state.'''
 
     dest, revs, co = hg.parseurl(ui.expandpath(dest or 'default-push',
                                                dest or 'default'))
@@ -848,7 +856,7 @@ def submit(ui, repo, change=None, dest=None, **opts):
     client = p4client(ui, repo, dest)
     if change:
         change = int(change)
-    else:
+    elif opts['all']:
         changes = {}
         pending = client.getpendingdict()
         for i in pending:
@@ -862,11 +870,55 @@ def submit(ui, repo, change=None, dest=None, **opts):
             changes.sort()
             raise util.Abort(_('more than one changelist to submit: %s') % ' '.join(str(i) for i in changes))
         change = changes[0]
+    else:
+        raise util.Abort(_('no changelists specified'))
 
     desc, user, date, files = client.describe(change, files=True)
     nodes = client.parsenodes(desc)
 
     client.submit(nodes, change, (f[0] for f in files))
+    client.close()
+
+
+def revert(ui, repo, change=None, dest=None, **opts):
+    '''revert a pending changelist and all opened files
+    then update the local repository state.'''
+
+    dest, revs, co = hg.parseurl(ui.expandpath(dest or 'default-push',
+                                               dest or 'default'))
+
+    client = p4client(ui, repo, dest)
+    if change:
+        changes = [int(change)]
+    elif opts['all']:
+        changes = {}
+        pending = client.getpendingdict()
+        for i in pending:
+            i = pending[i]
+            if isinstance(i,int):
+                changes[i] = True
+        changes = changes.keys()
+        if len(changes) == 0:
+            raise util.Abort(_('no pending changelists to revert'))
+    else:
+        raise util.Abort(_('no changelists specified'))
+
+    for c in changes:
+        desc, user, date, files = client.describe(c, files=True)
+        files = [f[1] for f in files]
+        ui.note(_('reverting: %s\n') % ' '.join(files))
+        client.runs('revert', files=files, abort=False)
+        ui.note(_('deleting: %d\n') % c)
+        client.runs('change -d %d' %c , abort=False)
+
+        reverted = []
+        for rev in client.getpendingdict():
+            if client.getpending(rev) == c:
+                reverted.append(rev)
+
+        for rev in reverted:
+            client.setpending(rev, None)
+
     client.close()
 
 
@@ -891,7 +943,11 @@ def pending(ui, repo, dest=None, **opts):
     keys.sort()
 
     for i in keys:
-        ui.write('%d %s\n' % (i, ' '.join(changes[i])))
+        if i == client.SUBMITTED:
+            state = 'submitted'
+        else:
+            state = str(i)
+        ui.write('%s %s\n' % (state, ' '.join(r[:12] for r in changes[i])))
 
     client.close()
 
@@ -934,14 +990,18 @@ def identify(ui, repo, *args, **opts):
 
 cmdtable = {
     # 'command-name': (function-call, options-list, help-string)
-    'p4submit':
-        (   submit,
-            [ ],
-            'hg p4submit changelist [p4://server/client]'),
     'p4pending':
         (   pending,
             [ ],
             'hg p4pending [p4://server/client]'),
+    'p4revert':
+        (   revert,
+            [ ('a', 'all', None,   _('revert all pending changelists')) ],
+            'hg p4revert [-a] changelist... [p4://server/client]'),
+    'p4submit':
+        (   submit,
+            [ ('a', 'all', None,   _('submit all pending changelists')) ],
+            'hg p4submit [-a] changelist... [p4://server/client]'),
     'p4identify':
         (   identify,
             [ ('r', 'rev', '',   _('identify the specified revision')),
