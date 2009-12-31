@@ -259,14 +259,16 @@ class p4client:
 
 
     def runs(self, cmd, **args):
-        'Run a P4 command and return first object, or False if more, or None'
-        r = None
+        '''Run a P4 command and return the number of objects returned,
+        or the object itself if exactly one was returned'''
+        count = 0
         for d in self.run(cmd, **args):
-            if r is None:
-                r = d
-            else:
-                r = False
-        return r
+            if not count:
+                value = d
+            count += 1
+        if count == 1:
+            return value
+        return count
 
 
     def getuser(self, user):
@@ -287,7 +289,11 @@ class p4client:
 
 
     def describe(self, change, files=None):
-        'Return p4 changelist description and optionally the files affected'
+        '''Return p4 changelist description, user name and date.
+        If the files argument is true, then also collect a list of 5-tuples
+            (depotname, localname, revision, type, action)
+        Retrieving the filenames is potentially very slow.
+        '''
 
         d = self.runs('describe -s %d' % change)
         desc = d['desc']
@@ -312,10 +318,10 @@ class p4client:
                             raise util.Abort(where['data'])
                     
                     df = where['depotFile']
-                    if 'unmap' in where:
+                    lf = where['path']
+                    if 'unmap' in where or lf.startswith('.hg'):
                         self.wherecache[df] = None
                     else:
-                        lf = where['path']
                         lf = util.pconvert(lf)
                         if lf.startswith('%s/' % self.root):
                             lf = lf[len(self.root) + 1:]
@@ -352,13 +358,14 @@ class p4client:
         return desc, user, date, files
 
 
-    def getfile(self, filet, change):
+    def getfile(self, filet, change, keepsync=True):
         'Return contents of a file in the p4 depot at the given change number'
 
         mode, keywords = self.decodetype(filet[3])
 
         if self.keep:
-            self.runs('sync "%s"@%s' % (filet[0], change), abort=False)
+            if keepsync:
+                self.runs('sync "%s"@%s' % (filet[0], change), abort=False)
             fn = os.sep.join([self.root, filet[1]])
             fn = util.localpath(fn)
             if mode == 'l':
@@ -533,7 +540,7 @@ class p4client:
         cl = None
         for d in self.run('submit -c %s' % change):
             if d['code'] == 'error':
-                raise util.Abort(_('Error submitting p4 change %s: %s') % (change, d['data']))
+                raise util.Abort(_('error submitting p4 change %s: %s') % (change, d['data']))
             cl = d.get('submittedChange', cl)
 
         for n in nodes:
@@ -599,7 +606,7 @@ def pull(original, ui, repo, source=None, **opts):
 
     def getfilectx(repo, memctx, fn):
         'callback to read file data'
-        mode, contents = client.getfile(revcache[fn], c)
+        mode, contents = client.getfile(revcache[fn], c, keepsync=False)
         return context.memfilectx(fn, contents, 'l' in mode, 'x' in mode, None)
 
     tags = []
@@ -607,6 +614,13 @@ def pull(original, ui, repo, source=None, **opts):
     try:
         for c in changes:
             desc, user, date, files = client.describe(c, files=True)
+
+            if client.keep:
+                n = client.runs('sync', 
+                                files=[('%s@%d' % (f[1], c)) for f in files],
+                                abort=False)
+                if n < len(files):
+                    raise util.Abort(_('incomplete reply from p4, reduce maxargs'))
 
             revcache = dict((f[1],f) for f in files)
 
@@ -624,37 +638,41 @@ def pull(original, ui, repo, source=None, **opts):
                 for n in nodes:
                     client.setpending(repo[n].hex(), None)
 
-            newrev = repo.commitctx(ctx)
-            ctx = repo[newrev]
+            p4rev = repo.commitctx(ctx)
+            ctx = repo[p4rev]
 
             labels = client.labels(c)
             if labels:
                 tags.append((c, ctx.hex(), labels))
 
-            p4rev = newrev
             ui.note(_('added changeset %d:%s\n') % (ctx.rev(), ctx))
 
     finally:
         if tags:
+            p4rev, p4id = client.latest()
+            ctx = repo[p4rev]
+
             if '.hgtags' in ctx:
-                tagdata = ctx.filectx('.hgtags').data()
+                tagdata = [ctx.filectx('.hgtags').data()]
             else:
-                tagdata = ''
+                tagdata = []
 
             desc = ['p4 tags']
             for t in tags:
                 for l in t[2]:
                     desc.append('   %s @ %d' % (l, t[0]))
-                    tagdata += '%s %s\n' % (t[1], l)
+                    tagdata.append('%s %s\n' % (t[1], l))
 
             def getfilectx(repo, memctx, fn):
                 'callback to read file data'
                 assert fn=='.hgtags'
-                return context.memfilectx(fn, tagdata, False, False, None)
+                return context.memfilectx(fn, ''.join(tagdata), False, False, None)
 
             ctx = context.memctx(repo, (p4rev, None), '\n'.join(desc),
                                  ['.hgtags'], getfilectx)
-            repo.commitctx(ctx)
+            p4rev = repo.commitctx(ctx)
+            ctx = repo[p4rev]
+            ui.note(_('added changeset %d:%s\n') % (ctx.rev(), ctx))
 
     client.close()
 
@@ -692,15 +710,14 @@ def clone(original, ui, source, dest=None, **opts):
     opts['update'] = not opts['noupdate']
     opts['force'] = opts['rev'] = None
 
-    r = pull(None, ui, repo, source=source, **opts)
-
-    if not r:
+    try:
+        r = pull(None, ui, repo, source=source, **opts)
+    finally:
         fp = repo.opener("hgrc", "w", text=True)
         fp.write("[paths]\n")
         fp.write("default = %s\n" % source)
         fp.write("\n[perfarce]\n")
         fp.write("keep = %s\n" % client.keep)
-
         fp.close()
 
     return r
@@ -731,7 +748,7 @@ def push(original, ui, repo, dest=None, **opts):
     done, r = p4client.pushcommon(False, original, ui, repo, dest, **opts)
     if done:
         return r
-    client, p4rev, p4id, nodes, ctx2, desc, mod, add, rem = r
+    client, p4rev, p4id, nodes, ctx, desc, mod, add, rem = r
 
     # sync to the last revision pulled/converted
     if client.keep:
@@ -742,7 +759,7 @@ def push(original, ui, repo, dest=None, **opts):
 
     # attempt to reuse an existing changelist
     use = ''
-    for d in client.run('changes -s pending -L'):
+    for d in client.run('changes -s pending -l'):
         if d['desc'] == desc:
             use = d['change']
 
@@ -773,7 +790,7 @@ def push(original, ui, repo, dest=None, **opts):
                 if m:
                     use = m.group(1)
         else:
-            raise util.Abort(_('Error creating p4 change: %s') % data)
+            raise util.Abort(_('error creating p4 change: %s') % data)
 
     finally:
         try:
@@ -782,7 +799,7 @@ def push(original, ui, repo, dest=None, **opts):
             pass
 
     if not use:
-        raise util.Abort(_('Did not get changelist number from p4'))
+        raise util.Abort(_('did not get changelist number from p4'))
 
     # now add/edit/delete the files
     if mod:
@@ -790,14 +807,14 @@ def push(original, ui, repo, dest=None, **opts):
         client.runs('edit -c %s' % use, files=mod)
 
     if mod or add:
-        ui.note(_('Retrieving file contents...\n'))
-        m = cmdutil.match(repo, mod + add, opts={})
-        for abs in ctx2.walk(m):
-            out = os.path.join(client.root, abs)
+        ui.note(_('retrieving file contents...\n'))
+
+        for f in mod + add:
+            out = os.path.join(client.root, f)
             ui.debug(_('writing: %s\n') % out)
             util.makedirs(os.path.dirname(out))
-            fp = cmdutil.make_file(repo, out, ctx2.node(), pathname=abs)
-            data = ctx2[abs].data()
+            fp = cmdutil.make_file(repo, out, ctx.node(), pathname=f)
+            data = ctx[f].data()
             fp.write(data)
             fp.close()
 
