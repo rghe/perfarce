@@ -1,6 +1,6 @@
 # Mercurial extension to push to and pull from Perforce depots.
 #
-# Copyright 2009 Frank Kingswood <frank@kingswood-consulting.co.uk>
+# Copyright 2009-10 Frank Kingswood <frank@kingswood-consulting.co.uk>
 #
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2, incorporated herein by reference.
@@ -17,43 +17,43 @@ problems when synchronizing the repositories, and should be avoided.
 
 Five built-in commands are overridden:
 
-    hg outgoing: If the destination repository name starts with p4:// then this
-                 reports files affected by the revision(s) that are in the
-                 local repository but not in the p4 depot.
+ outgoing  If the destination repository name starts with p4:// then
+           this reports files affected by the revision(s) that are
+           in the local repository but not in the p4 depot.
 
-    hg push:     If the destination repository name starts with p4:// then this
-                 export changes from the local repository to the p4 depot. If no
-                 revision is specified then all changes since the last p4 
-                 changelist are pushed. In either case, all revisions to be 
-                 pushed are foled into a single p4 changelist. Optionally
-                 the resulting changelist is submitted to the p4 server,
-                 controlled by the --submit option to push, or by setting
-                    --config perfarce.submit=True
-                 If the option
-                    --config perfarce.keep=False
-                 is False then after a successful submit the files in the
-                 p4 workarea will be deleted.
+ push      If the destination repository name starts with p4:// then
+           this exports changes from the local repository to the p4
+           depot. If no revision is specified then all changes since
+           the last p4 changelist are pushed. In either case, all
+           revisions to be pushed are foled into a single p4 changelist.
+           Optionally the resulting changelist is submitted to the p4
+           server, controlled by the --submit option to push, or by
+           setting
+              --config perfarce.submit=True
+           If the option
+              --config perfarce.keep=False
+           is False then after a successful submit the files in the
+           p4 workarea will be deleted.
 
-    hg pull:     If the source repository name starts with p4:// then this
-                 imports changes from the p4 depot, automatically creating
-                 merges of changelists submitted by hg push.
-                 If the option
-                    --config perfarce.keep=False
-                 is False then the import does not leave files in the p4
-                 workarea, otherwise the p4 workarea will be updated
-                 with the new files.
+ pull      If the source repository name starts with p4:// then this
+           imports changes from the p4 depot, automatically creating
+           merges of changelists submitted by hg push.
+           If the option
+              --config perfarce.keep=False
+           is False then the import does not leave files in the p4
+           workarea, otherwise the p4 workarea will be updated
+           with the new files.
 
-    hg incoming: If the source repository name starts with p4:// then this
-                 reports changes in the p4 depot that are not yet in the
-                 local repository.
+ incoming  If the source repository name starts with p4:// then this
+           reports changes in the p4 depot that are not yet in the
+           local repository.
 
-    hg clone:    If the source repository name starts with p4:// then this
-                 creates the destination repository and pulls all changes
-                 from the p4 depot into it.
-
+ clone     If the source repository name starts with p4:// then this
+           creates the destination repository and pulls all changes
+           from the p4 depot into it.
 '''
 
-from mercurial import cmdutil, commands, context, extensions, hg, util
+from mercurial import cmdutil, commands, context, copies, extensions, hg, node, util
 from mercurial.i18n import _
 from hgext.convert.p4 import loaditer
 
@@ -314,7 +314,7 @@ class p4client:
                             continue
                         else:
                             raise util.Abort(where['data'])
-                    
+
                     df = where['depotFile']
                     lf = where['path']
                     if 'unmap' in where or lf.startswith('.hg'):
@@ -493,8 +493,11 @@ class p4client:
         # find changed files
         if not nodes:
             mod = add = rem = []
+            cpy = {}
         else:
             mod, add, rem = repo.status(node1=ctx1.node(), node2=ctx2.node())[:3]
+            cpy = copies.copies(repo, ctx1, ctx2, repo[node.nullid])[0]
+
             # remove .hg* files (mainly for .hgtags and .hgignore)
             for changes in [mod, add, rem]:
                 i = 0
@@ -522,7 +525,7 @@ class p4client:
 
         desc='\n* * *\n'.join(desc) + '\n\n{{mercurial %s}}\n' % (':'.join(h))
 
-        return False, (client, p4rev, p4id, nodes, ctx2, desc, mod, add, rem)
+        return False, (client, p4rev, p4id, nodes, ctx2, desc, mod, add, rem, cpy)
 
 
     def parsenodes(self, desc):
@@ -539,7 +542,7 @@ class p4client:
         return nodes
 
 
-    def submit(self, nodes, change, files):
+    def submit(self, nodes, change):
         '''submit one changelist to p4, mark nodes in p4stat and optionally
         delete the files added or modified in the p4 workarea'''
 
@@ -554,7 +557,7 @@ class p4client:
 
         self.ui.note(_('submitted changelist %s\n') % cl)
 
-        if files and not self.keep:
+        if not self.keep:
             # delete the files in the p4 client directory
             self.runs('sync ...@0', abort=False)
 
@@ -622,7 +625,7 @@ def pull(original, ui, repo, source=None, **opts):
             desc, user, date, files = client.describe(c, files=True)
 
             if client.keep:
-                n = client.runs('sync', 
+                n = client.runs('sync',
                                 files=[('%s@%d' % (f[1], c)) for f in files],
                                 abort=False)
                 if n < len(files):
@@ -736,7 +739,7 @@ def outgoing(original, ui, repo, dest=None, **opts):
     done, r = p4client.pushcommon(True, original, ui, repo, dest, **opts)
     if done:
         return r
-    client, p4rev, p4id, nodes, ctx2, desc, mod, add, rem = r
+    client, p4rev, p4id, nodes, ctx, desc, mod, add, rem, cpy = r
 
     ui.write(desc)
     ui.write('\naffected files:\n')
@@ -754,7 +757,7 @@ def push(original, ui, repo, dest=None, **opts):
     done, r = p4client.pushcommon(False, original, ui, repo, dest, **opts)
     if done:
         return r
-    client, p4rev, p4id, nodes, ctx, desc, mod, add, rem = r
+    client, p4rev, p4id, nodes, ctx, desc, mod, add, rem, cpy = r
 
     # sync to the last revision pulled/converted
     if client.keep:
@@ -808,6 +811,10 @@ def push(original, ui, repo, dest=None, **opts):
     if not use:
         raise util.Abort(_('did not get changelist number from p4'))
 
+    # sort out the copies from the adds
+    ntg = [(cpy[f], f) for f in add if f in cpy]
+    add = [f for f in add if f not in cpy]
+
     # now add/edit/delete the files
     if mod:
         ui.note(_('opening for edit: %s\n') % ' '.join(mod))
@@ -829,13 +836,18 @@ def push(original, ui, repo, dest=None, **opts):
         ui.note(_('opening for add: %s\n') % ' '.join(add))
         client.runs('add -c %s' % use, files=add)
 
+    if ntg:
+        ui.note(_('opening for integrate: %s\n') % ' '.join(f[1] for f in ntg))
+        for f in ntg:
+            client.runs('integrate -c %s %s %s' % (use, f[0], f[1]))
+
     if rem:
         ui.note(_('opening for delete: %s\n') % ' '.join(rem))
         client.runs('delete -c %s' % use, files=rem)
 
     # submit the changelist to perforce if --submit was given
     if opts['submit'] or ui.configbool('perfarce', 'submit', default=False):
-        client.submit(nodes, use, mod + add)
+        client.submit(nodes, use)
     else:
         for n in nodes:
             client.setpending(repo[n].hex(), int(use))
@@ -856,27 +868,30 @@ def submit(ui, repo, change=None, dest=None, **opts):
     client = p4client(ui, repo, dest)
     if change:
         change = int(change)
+        desc, user, date, files = client.describe(change)
+        nodes = client.parsenodes(desc)
+        client.submit(nodes, change)
     elif opts['all']:
         changes = {}
         pending = client.getpendingdict()
         for i in pending:
             i = pending[i]
-            if isinstance(i,int):
+            if i != client.SUBMITTED:
                 changes[i] = True
         changes = changes.keys()
+        changes.sort()
+
         if len(changes) == 0:
             raise util.Abort(_('no pending changelists to submit'))
-        elif len(changes) > 1:
-            changes.sort()
-            raise util.Abort(_('more than one changelist to submit: %s') % ' '.join(str(i) for i in changes))
-        change = changes[0]
+        
+        for c in changes:
+            desc, user, date, files = client.describe(c)
+            nodes = client.parsenodes(desc)
+            client.submit(nodes, c)
+
     else:
         raise util.Abort(_('no changelists specified'))
 
-    desc, user, date, files = client.describe(change, files=True)
-    nodes = client.parsenodes(desc)
-
-    client.submit(nodes, change, (f[0] for f in files))
     client.close()
 
 
@@ -935,10 +950,7 @@ def pending(ui, repo, dest=None, **opts):
     for i in pending:
         j = pending[i]
         if isinstance(j,int):
-            if j in changes:
-                changes[j].append(i)
-            else:
-                changes[j] = [i]
+            changes.setdefault(j, []).append(i)
     keys = changes.keys()
     keys.sort()
 
@@ -953,7 +965,7 @@ def pending(ui, repo, dest=None, **opts):
 
 
 def identify(ui, repo, *args, **opts):
-    '''show p4 and hg revisions
+    '''show p4 and hg revisions for the most recent p4 changelist
 
     With no revision, print a summary of the most recent revision
     in the repository that was converted from p4.

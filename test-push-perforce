@@ -220,6 +220,24 @@ echo % hg tag
 hg $HGDEBUG pull -u
 hg tag -r 5 tag-created-in-hg
 
-hg $HGDEBUG push
+hg $HGDEBUG push --submit
+
+echo % copy files
+hg cp a aa
+hg $HGDEBUG commit -m "hg copy a"
+
+hg $HGDEBUG push -r tip --submit
+
+echo % move files
+hg mv c cc
+hg $HGDEBUG commit -m "hg move c"
+
+hg $HGDEBUG push -r tip  --submit
+
+echo % move dir
+hg mv b bb
+hg $HGDEBUG commit -m "hg move b"
+
+hg $HGDEBUG push -r tip  --submit
 
 # EOF
