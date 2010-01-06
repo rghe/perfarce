@@ -661,7 +661,7 @@ def pull(original, ui, repo, source=None, **opts):
 
             if client.keep:
                 n = client.runs('sync',
-                                files=[('%s@%d' % (f[-1], f[1])) for f in files],
+                                files=[('%s#%d' % (f[-1], f[1])) for f in files],
                                 abort=False)
                 if n < len(files):
                     raise util.Abort(_('incomplete reply from p4, reduce maxargs'))
