@@ -67,7 +67,8 @@ def uisetup(ui):
     p[1].append(('', 'submit', None, 'for p4:// destination submit new changelist to server'))
     extensions.wrapcommand(commands.table, 'incoming', incoming)
     extensions.wrapcommand(commands.table, 'outgoing', outgoing)
-    extensions.wrapcommand(commands.table, 'clone', clone)
+    p = extensions.wrapcommand(commands.table, 'clone', clone)
+    p[1].append(('', 'startrev', '', 'for p4:// source set initial revisions for clone'))
 
 # --------------------------------------------------------------------------
 
@@ -87,6 +88,7 @@ class p4client:
             self.keep = ui.configbool('perfarce', 'keep', True)
 
             # caches
+            self.clientspec = {}
             self.usercache = {}
             self.wherecache = {}
             self.p4stat = None
@@ -98,7 +100,7 @@ class p4client:
             self.re_keywords_old = re.compile('\$(Id|Header):[^$\n]*\$')
             self.re_hgid = re.compile('{{mercurial (([0-9a-f]{40})(:([0-9a-f]{40}))?)}}')
             self.re_number = re.compile('.+ ([0-9]+) .+')
-            self.actions = { 'edit':'M', 'add':'A', 'delete':'R', 'branch':'A', 'integrate':'M' }
+            self.actions = { 'edit':'M', 'add':'A', 'move/add':'A', 'delete':'R', 'move/delete':'R', 'purge':'R', 'branch':'A', 'integrate':'M' }
 
             maxargs = ui.config('perfarce', 'maxargs')
             if maxargs:
@@ -113,7 +115,7 @@ class p4client:
                 s = '%s:1666' % s
             self.server = s
             if c:
-                d = self.runs('client -o "%s"' % c)
+                d = self.runs('client -o %s' % util.shellquote(c))
                 for n in ['Root'] + ['AltRoots%d' % i for i in range(9)]:
                     if n in d and os.path.isdir(d[n]):
                         self.root = util.pconvert(d[n])
@@ -122,7 +124,8 @@ class p4client:
                     ui.note(_('the p4 client root must exist\n'))
                     assert False
 
-                self.client=c
+                self.clientspec = d
+                self.client = c
         except:
             ui.traceback()
             raise util.Abort(_('not a p4 repository'))
@@ -134,13 +137,19 @@ class p4client:
             self._writep4stat()
 
 
-    def latest(self):
+    def latest(self, tags=False):
         '''Find the most recent changelist which has the p4 extra data which
         gives the p4 changelist it was converted from'''
         for rev in xrange(len(self.repo)-1, -1, -1):
             ctx = self.repo[rev]
             extra = ctx.extra()
             if 'p4' in extra:
+                if tags:
+                    # if there is a child with p4 tags then return the child revision
+                    for ctx2 in ctx.children():
+                        if ctx2.description()=='p4 tags' and ".hgtags" in ctx2:
+                            ctx = ctx2
+                            break
                 return ctx.node(), int(extra['p4'])
         raise util.Abort(_('no p4 changelist revision found'))
 
@@ -239,7 +248,7 @@ class p4client:
                 os.chdir(self.root)
 
             for i in range(0, len(files), self.MAXARGS) or [0]:
-                cs = ' '.join(c + [('"%s"' % f) for f in files[i:i + self.MAXARGS]])
+                cs = ' '.join(c + [util.shellquote(f) for f in files[i:i + self.MAXARGS]])
                 if self.ui.debugflag: self.ui.debug('> %s\n' % cs)
 
                 for d in loaditer(util.popen(cs, mode='rb')):
@@ -275,7 +284,7 @@ class p4client:
         if r:
             return r
 
-        d = self.runs('user -o "%s"' % user, abort=False)
+        d = self.runs('user -o %s' % util.shellquote(user), abort=False)
         if 'Update' in d:
             try:
                 r = '%s <%s>' % (d['FullName'], d['Email'])
@@ -286,10 +295,63 @@ class p4client:
         return user
 
 
+    def where(self, files):
+        '''Find local names for a list of files in the depot.
+        Takes a list of tuples with the first element being the depot name
+        and returns a modified list, with only entries for files that appear
+        in the workspace, and appending the local name (relative to the root
+        of the workarea) to each tuple.
+        '''
+
+        result = []
+        fdict = {}
+
+        for f in files:
+            df = f[0]
+            if df in self.wherecache:
+                lf = self.wherecache[df]
+                if lf is not None:
+                    result.append(f + (lf,))
+            else:
+                fdict[df] = f
+
+        if fdict:
+            flist = sorted(f for f in fdict)
+
+            n = len(flist)
+            for where in self.run('where', files=flist, abort=False):
+                n -= 1
+                if where['code'] == 'error':
+                    if where['severity'] == 2 and where['generic'] == 17:
+                        # file not in client view
+                        continue
+                    else:
+                        raise util.Abort(where['data'])
+
+                df = where['depotFile']
+                lf = where['path']
+                if 'unmap' in where or lf.startswith('.hg'):
+                    self.wherecache[df] = None
+                else:
+                    lf = util.pconvert(lf)
+                    if lf.startswith('%s/' % self.root):
+                        lf = lf[len(self.root) + 1:]
+                    else:
+                        raise util.Abort(_('invalid p4 local path %s') % lf)
+
+                    self.wherecache[df] = lf
+                    result.append(fdict[df] + (lf,))
+
+            if n:
+                raise util.Abort(_('incomplete reply from p4, reduce maxargs'))
+
+        return result
+
+
     def describe(self, change, files=None):
         '''Return p4 changelist description, user name and date.
         If the files argument is true, then also collect a list of 5-tuples
-            (depotname, localname, revision, type, action)
+            (depotname, revision, type, action, localname)
         Retrieving the filenames is potentially very slow.
         '''
 
@@ -300,71 +362,29 @@ class p4client:
 
         if files:
             files = []
-            args = {}
-
-            def batch(files, args):
-                'helper to reduce the number of calls to p4 where'
-                flist = sorted(f for f in args)
-                n = len(flist)
-                for where in self.run('where', files=flist, abort=False):
-                    n -= 1
-                    if where['code'] == 'error':
-                        if where['severity'] == 2 and where['generic'] == 17:
-                            # file not in client view
-                            continue
-                        else:
-                            raise util.Abort(where['data'])
-
-                    df = where['depotFile']
-                    lf = where['path']
-                    if 'unmap' in where or lf.startswith('.hg'):
-                        self.wherecache[df] = None
-                    else:
-                        lf = util.pconvert(lf)
-                        if lf.startswith('%s/' % self.root):
-                            lf = lf[len(self.root) + 1:]
-                        else:
-                            raise util.Abort(_('invalid p4 local path %s') % lf)
-                        self.wherecache[df] = lf
-
-                        rev, type, action = args[df]
-                        files.append((df, lf, rev, type, action))
-
-                if n:
-                    raise util.Abort(_('incomplete reply from p4, reduce maxargs'))
-                args.clear()
-
             i = 0
             while ('depotFile%d' % i) in d and ('rev%d' % i) in d:
-                df = d['depotFile%d' % i]
-                action = self.actions[d['action%d' % i]]
-
-                if df in self.wherecache:
-                    lf = self.wherecache[df]
-                    if lf is not None:
-                        files.append((df, lf, d['rev%d' % i], d['type%d' % i], action))
-                else:
-                    args[df] = d['rev%d' % i], d['type%d' % i], action
-
-                    if len(args) >= self.MAXARGS:
-                        batch(files, args)
+                files.append((d['depotFile%d' % i], int(d['rev%d' % i]), d['type%d' % i], self.actions[d['action%d' % i]]))
                 i += 1
-
-            if args:
-                batch(files, args)
+            files = self.where(files)
 
         return desc, user, date, files
 
 
-    def getfile(self, filet, change, keepsync=True):
-        'Return contents of a file in the p4 depot at the given change number'
+    def getfile(self, entry, keepsync=True):
+        '''Return contents of a file in the p4 depot at the given revision number
+        Raises IOError if the file is deleted.
+        '''
 
-        mode, keywords = self.decodetype(filet[3])
+        if entry[3] == 'R':
+            raise IOError()
+
+        mode, keywords = self.decodetype(entry[2])
 
         if self.keep:
             if keepsync:
-                self.runs('sync "%s"@%s' % (filet[0], change), abort=False)
-            fn = os.sep.join([self.root, filet[1]])
+                self.runs('sync %s@%s' % (util.shellquote(entry[0]), entry[1]), abort=False)
+            fn = os.sep.join([self.root, entry[-1]])
             fn = util.localpath(fn)
             if mode == 'l':
                 contents = os.readlink(fn)
@@ -372,7 +392,7 @@ class p4client:
                 contents = file(fn, 'rb').read()
         else:
             contents = []
-            for d in self.run('print "%s"@%s' % (filet[0], change)):
+            for d in self.run('print %s#%d' % (util.shellquote(entry[0]), entry[1])):
                 code = d['code']
                 if code == 'text' or code == 'binary':
                     contents.append(d['data'])
@@ -412,7 +432,7 @@ class p4client:
             return True, original(ui, repo, source, **opts)
 
         if len(repo):
-            p4rev, p4id = client.latest()
+            p4rev, p4id = client.latest(tags=True)
         else:
             p4rev = None
             p4id = 0
@@ -439,7 +459,7 @@ class p4client:
             ui.traceback()
             return True, original(ui, repo, dest, **opts)
 
-        p4rev, p4id = client.latest()
+        p4rev, p4id = client.latest(tags=True)
         ctx1 = repo[p4rev]
         rev = opts.get('rev')
 
@@ -531,7 +551,7 @@ class p4client:
     def parsenodes(self, desc):
         'find revisions in p4 changelist description'
         m = self.re_hgid.search(desc)
-        nodes = None
+        nodes = []
         if m:
             try:
                 nodes = self.repo.changelog.nodesbetween(
@@ -584,7 +604,7 @@ def incoming(original, ui, repo, source='default', **opts):
         ui.write(_('user:        %s\n') % user)
         ui.write(_('date:        %s\n') % util.datestr(date))
         if ui.verbose:
-            ui.write(_('files:       %s\n') % ' '.join(f[1] for f in files))
+            ui.write(_('files:       %s\n') % ' '.join(f[-1] for f in files))
 
         if desc:
             if ui.verbose:
@@ -606,32 +626,47 @@ def pull(original, ui, repo, source=None, **opts):
         return r
 
     client, p4rev, p4id, changes = r
-    revcache = {}
+    entries = {}
     c = 0
 
     if client.keep:
-       # tell te server we have no files
+       # tell the server we have no files
        client.runs('sync -k ...@0', abort=False)
 
     def getfilectx(repo, memctx, fn):
         'callback to read file data'
-        mode, contents = client.getfile(revcache[fn], c, keepsync=False)
+        mode, contents = client.getfile(entries[fn], keepsync=False)
         return context.memfilectx(fn, contents, 'l' in mode, 'x' in mode, None)
 
+    # for clone we support a --startrev option to fold initial changelists
+    startrev = opts.get('startrev')
+    if startrev:
+        startrev = int(startrev)
+        changes = [c for c in changes if c >= startrev]
+        if len(changes) < 2:
+            raise util.Abort(_('with --startrev there must be at least two revisions to clone'))
+        if changes[0] != startrev:
+            raise util.Abort(_('changelist for --startrev not found'))
+    
     tags = []
 
     try:
         for c in changes:
-            desc, user, date, files = client.describe(c, files=True)
+            desc, user, date, files = client.describe(c, files=not startrev)
+            if startrev:
+                files = []
+                for d in client.run('files ...@%d' % startrev):
+                    files.append((d['depotFile'], int(d['rev']), d['type'], client.actions[d['action']]))
+                files = client.where(files)
 
             if client.keep:
                 n = client.runs('sync',
-                                files=[('%s@%d' % (f[1], c)) for f in files],
+                                files=[('%s@%d' % (f[-1], f[1])) for f in files],
                                 abort=False)
                 if n < len(files):
                     raise util.Abort(_('incomplete reply from p4, reduce maxargs'))
 
-            revcache = dict((f[1],f) for f in files)
+            entries = dict((f[-1],f) for f in files)
 
             nodes = client.parsenodes(desc)
             if nodes:
@@ -639,9 +674,17 @@ def pull(original, ui, repo, source=None, **opts):
             else:
                 parent = None
 
+            if startrev:
+                # no 'p4' data on first revision as it does not correspond 
+                # to a p4 changelist but to all of history up to a point
+                extra = {}
+                startrev = False
+            else:
+                extra = {'p4':c}
+
             ctx = context.memctx(repo, (p4rev, parent), desc,
-                                 [f[1] for f in files], getfilectx,
-                                 user, date, {'p4':c})
+                                 [f[-1] for f in files], getfilectx,
+                                 user, date, extra)
 
             if nodes:
                 for n in nodes:
@@ -683,7 +726,7 @@ def pull(original, ui, repo, source=None, **opts):
             ctx = repo[p4rev]
             ui.note(_('added changeset %d:%s\n') % (ctx.rev(), ctx))
 
-    client.close()
+        client.close()
 
     if opts['update']:
         return hg.update(repo, 'tip')
@@ -790,7 +833,7 @@ def push(original, ui, repo, dest=None, **opts):
         fp.close()
 
         # update p4 changelist
-        d = client.runs('change -i <"%s"' % fn)
+        d = client.runs('change -i <%s' % util.shellquote(fn))
         data = d['data']
         if d['code'] == 'info':
             if not ui.verbose:
@@ -919,12 +962,17 @@ def revert(ui, repo, change=None, dest=None, **opts):
         raise util.Abort(_('no changelists specified'))
 
     for c in changes:
-        desc, user, date, files = client.describe(c, files=True)
-        files = [f[1] for f in files]
-        ui.note(_('reverting: %s\n') % ' '.join(files))
-        client.runs('revert', files=files, abort=False)
-        ui.note(_('deleting: %d\n') % c)
-        client.runs('change -d %d' %c , abort=False)
+        try:
+            desc, user, date, files = client.describe(c, files=True)
+        except:
+            files = None
+
+        if files is not None:
+            files = [f[-1] for f in files]
+            ui.note(_('reverting: %s\n') % ' '.join(files))
+            client.runs('revert', files=files, abort=False)
+            ui.note(_('deleting: %d\n') % c)
+            client.runs('change -d %d' %c , abort=False)
 
         reverted = []
         for rev in client.getpendingdict():
@@ -954,12 +1002,13 @@ def pending(ui, repo, dest=None, **opts):
     keys = changes.keys()
     keys.sort()
 
+    len = not ui.verbose and 12 or None
     for i in keys:
         if i == client.SUBMITTED:
             state = 'submitted'
         else:
             state = str(i)
-        ui.write('%s %s\n' % (state, ' '.join(r[:12] for r in changes[i])))
+        ui.write('%s %s\n' % (state, ' '.join(r[:len] for r in changes[i])))
 
     client.close()
 
