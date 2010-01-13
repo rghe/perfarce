@@ -147,7 +147,7 @@ class p4client:
                 if tags:
                     # if there is a child with p4 tags then return the child revision
                     for ctx2 in ctx.children():
-                        if ctx2.description()=='p4 tags' and ".hgtags" in ctx2:
+                        if ctx2.description().startswith('p4 tags\n') and ".hgtags" in ctx2:
                             ctx = ctx2
                             break
                 return ctx.node(), int(extra['p4'])
@@ -211,7 +211,7 @@ class p4client:
                 self.p4stat[line[0]] = state
         except:
             self.ui.traceback()
-            self.ui.note('error reading p4stat\n')
+            self.ui.note(_('error reading p4stat\n'))
         self.ui.debug('read p4stat=%r\n' % self.p4stat)
         self.p4statdirty = False
 
@@ -265,7 +265,7 @@ class p4client:
             os.chdir(old)
 
 
-    def runs(self, cmd, **args):
+    def runs(self, cmd, one=True, **args):
         '''Run a P4 command and return the number of objects returned,
         or the object itself if exactly one was returned'''
         count = 0
@@ -273,7 +273,7 @@ class p4client:
             if not count:
                 value = d
             count += 1
-        if count == 1:
+        if count == 1 and one:
             return value
         return count
 
@@ -317,10 +317,18 @@ class p4client:
 
         if fdict:
             flist = sorted(f for f in fdict)
-
-            n = len(flist)
+            
+            n = 0
             for where in self.run('where', files=flist, abort=False):
-                n -= 1
+                n += 1
+
+                if n % 250 == 0:
+                    if hasattr(self.ui, 'progress'):
+                        self.ui.progress('p4 where', n, unit='files', total=len(files))
+                    else:
+                        self.ui.note('%d files\r' % n)
+                        self.ui.flush()
+
                 if where['code'] == 'error':
                     if where['severity'] == 2 and where['generic'] == 17:
                         # file not in client view
@@ -342,8 +350,16 @@ class p4client:
                     self.wherecache[df] = lf
                     result.append(fdict[df] + (lf,))
 
-            if n:
+            if hasattr(self.ui, 'progress'):
+                self.ui.progress('p4 where', None)
+            else:
+                self.ui.note('%d files \n' % len(result))
+                self.ui.flush()
+
+            if n < len(flist):
                 raise util.Abort(_('incomplete reply from p4, reduce maxargs'))
+            elif n > len(flist):
+                raise util.Abort(_('oversized reply from p4, remove duplicates from view'))
 
         return result
 
@@ -355,6 +371,7 @@ class p4client:
         Retrieving the filenames is potentially very slow.
         '''
 
+        self.ui.note(_('change %d\n') % change)
         d = self.runs('describe -s %d' % change)
         desc = d['desc']
         user = self.getuser(d['user'])
@@ -629,10 +646,6 @@ def pull(original, ui, repo, source=None, **opts):
     entries = {}
     c = 0
 
-    if client.keep:
-       # tell the server we have no files
-       client.runs('sync -k ...@0', abort=False)
-
     def getfilectx(repo, memctx, fn):
         'callback to read file data'
         mode, contents = client.getfile(entries[fn], keepsync=False)
@@ -642,13 +655,17 @@ def pull(original, ui, repo, source=None, **opts):
     startrev = opts.get('startrev')
     if startrev:
         startrev = int(startrev)
-        changes = [c for c in changes if c >= startrev]
+        if startrev < 0:
+            changes = changes[startrev:]
+            startrev = changes[0]
+        else:
+            changes = [c for c in changes if c >= startrev]
+            if changes[0] != startrev:
+                raise util.Abort(_('changelist for --startrev not found'))
         if len(changes) < 2:
             raise util.Abort(_('with --startrev there must be at least two revisions to clone'))
-        if changes[0] != startrev:
-            raise util.Abort(_('changelist for --startrev not found'))
     
-    tags = []
+    tags = {}
 
     try:
         for c in changes:
@@ -660,9 +677,9 @@ def pull(original, ui, repo, source=None, **opts):
                 files = client.where(files)
 
             if client.keep:
-                n = client.runs('sync',
+                n = client.runs('sync -f',
                                 files=[('%s#%d' % (f[-1], f[1])) for f in files],
-                                abort=False)
+                                one=False, abort=False)
                 if n < len(files):
                     raise util.Abort(_('incomplete reply from p4, reduce maxargs'))
 
@@ -678,7 +695,7 @@ def pull(original, ui, repo, source=None, **opts):
                 # no 'p4' data on first revision as it does not correspond 
                 # to a p4 changelist but to all of history up to a point
                 extra = {}
-                startrev = False
+                startrev = None
             else:
                 extra = {'p4':c}
 
@@ -693,9 +710,8 @@ def pull(original, ui, repo, source=None, **opts):
             p4rev = repo.commitctx(ctx)
             ctx = repo[p4rev]
 
-            labels = client.labels(c)
-            if labels:
-                tags.append((c, ctx.hex(), labels))
+            for l in client.labels(c):
+                tags[l] = (c, ctx.hex())
 
             ui.note(_('added changeset %d:%s\n') % (ctx.rev(), ctx))
 
@@ -710,10 +726,10 @@ def pull(original, ui, repo, source=None, **opts):
                 tagdata = []
 
             desc = ['p4 tags']
-            for t in tags:
-                for l in t[2]:
-                    desc.append('   %s @ %d' % (l, t[0]))
-                    tagdata.append('%s %s\n' % (t[1], l))
+            for l in sorted(tags):
+                t = tags[l]
+                desc.append('   %s @ %d' % (l, t[0]))
+                tagdata.append('%s %s\n' % (t[1], l))
 
             def getfilectx(repo, memctx, fn):
                 'callback to read file data'
@@ -784,13 +800,18 @@ def outgoing(original, ui, repo, dest=None, **opts):
         return r
     client, p4rev, p4id, nodes, ctx, desc, mod, add, rem, cpy = r
 
-    ui.write(desc)
-    ui.write('\naffected files:\n')
-    cwd = repo.getcwd()
-    for char, files in zip('MAR', (mod, add, rem)):
-        for f in files:
-            ui.write('%s %s\n' % (char, repo.pathto(f, cwd)))
-    ui.write('\n')
+    if ui.quiet:
+        # for thg integration until we support templates
+        for n in nodes:
+            ui.write('%s\n' % repo[n].hex())
+    else:
+        ui.write(desc)
+        ui.write('\naffected files:\n')
+        cwd = repo.getcwd()
+        for char, files in zip('MAR', (mod, add, rem)):
+            for f in files:
+                ui.write('%s %s\n' % (char, repo.pathto(f, cwd)))
+        ui.write('\n')
     client.close()
 
 
