@@ -317,7 +317,7 @@ class p4client:
 
         if fdict:
             flist = sorted(f for f in fdict)
-            
+
             n = 0
             for where in self.run('where', files=flist, abort=False):
                 n += 1
@@ -535,6 +535,14 @@ class p4client:
             mod, add, rem = repo.status(node1=ctx1.node(), node2=ctx2.node())[:3]
             cpy = copies.copies(repo, ctx1, ctx2, repo[node.nullid])[0]
 
+            # forget about copies with changes to the data
+            forget = []
+            for c in cpy:
+                if ctx2[c].data() != ctx1[cpy[c]].data():
+                    forget.append(c)
+            for c in forget:
+                del cpy[c]
+
             # remove .hg* files (mainly for .hgtags and .hgignore)
             for changes in [mod, add, rem]:
                 i = 0
@@ -664,7 +672,7 @@ def pull(original, ui, repo, source=None, **opts):
                 raise util.Abort(_('changelist for --startrev not found'))
         if len(changes) < 2:
             raise util.Abort(_('with --startrev there must be at least two revisions to clone'))
-    
+
     tags = {}
 
     try:
@@ -692,7 +700,7 @@ def pull(original, ui, repo, source=None, **opts):
                 parent = None
 
             if startrev:
-                # no 'p4' data on first revision as it does not correspond 
+                # no 'p4' data on first revision as it does not correspond
                 # to a p4 changelist but to all of history up to a point
                 extra = {}
                 startrev = None
@@ -947,7 +955,7 @@ def submit(ui, repo, change=None, dest=None, **opts):
 
         if len(changes) == 0:
             raise util.Abort(_('no pending changelists to submit'))
-        
+
         for c in changes:
             desc, user, date, files = client.describe(c)
             nodes = client.parsenodes(desc)
