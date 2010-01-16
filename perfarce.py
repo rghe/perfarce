@@ -25,7 +25,7 @@ Five built-in commands are overridden:
            this exports changes from the local repository to the p4
            depot. If no revision is specified then all changes since
            the last p4 changelist are pushed. In either case, all
-           revisions to be pushed are foled into a single p4 changelist.
+           revisions to be pushed are folded into a single p4 changelist.
            Optionally the resulting changelist is submitted to the p4
            server, controlled by the --submit option to push, or by
            setting
@@ -448,20 +448,33 @@ class p4client:
             ui.traceback()
             return True, original(ui, repo, source, **opts)
 
+        # for clone we support a --startrev option to fold initial changelists
+        startrev = opts.get('startrev')
+        startrev = startrev and int(startrev) or 0
+
         if len(repo):
             p4rev, p4id = client.latest(tags=True)
         else:
             p4rev = None
-            p4id = 0
+            if startrev > 0:
+                p4id = startrev
+            else:
+                p4id = 0
+
+        if startrev < 0:
+            # most recent changelists
+            p4cmd = 'changes -s submitted -m %d -L ...@%d,#head' % (-startrev, p4id)
+        else:
+            p4cmd = 'changes -s submitted -L ...@%d,#head' % p4id
 
         changes = []
-        for d in client.run('changes -s submitted -L ...@%d,#head' % p4id):
+        for d in client.run(p4cmd):
             c = int(d['change'])
-            if c != p4id:
+            if startrev or c != p4id:
                 changes.append(c)
         changes.sort()
 
-        return False, (client, p4rev, p4id, changes)
+        return False, (client, p4rev, p4id, startrev, changes)
 
 
     @staticmethod
@@ -616,7 +629,7 @@ def incoming(original, ui, repo, source='default', **opts):
     if done:
         return r
 
-    client, p4rev, p4id, changes = r
+    client, p4rev, p4id, startrev, changes = r
     for c in changes:
         desc, user, date, files = client.describe(c, files=ui.verbose)
         tags = client.labels(c)
@@ -650,7 +663,7 @@ def pull(original, ui, repo, source=None, **opts):
     if done:
         return r
 
-    client, p4rev, p4id, changes = r
+    client, p4rev, p4id, startrev, changes = r
     entries = {}
     c = 0
 
@@ -660,18 +673,14 @@ def pull(original, ui, repo, source=None, **opts):
         return context.memfilectx(fn, contents, 'l' in mode, 'x' in mode, None)
 
     # for clone we support a --startrev option to fold initial changelists
-    startrev = opts.get('startrev')
     if startrev:
-        startrev = int(startrev)
-        if startrev < 0:
-            changes = changes[startrev:]
-            startrev = changes[0]
-        else:
-            changes = [c for c in changes if c >= startrev]
-            if changes[0] != startrev:
-                raise util.Abort(_('changelist for --startrev not found'))
         if len(changes) < 2:
             raise util.Abort(_('with --startrev there must be at least two revisions to clone'))
+        if startrev < 0:
+            startrev = changes[0]
+        else:
+            if changes[0] != startrev:
+                raise util.Abort(_('changelist for --startrev not found'))
 
     tags = {}
 
