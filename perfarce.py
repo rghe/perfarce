@@ -101,7 +101,6 @@ class p4client:
             # caches
             self.clientspec = {}
             self.usercache = {}
-            self.wherecache = {}
             self.p4stat = None
             self.p4statdirty = False
 
@@ -306,75 +305,6 @@ class p4client:
         return user
 
 
-    def where(self, files):
-        '''Find local names for a list of files in the depot.
-        Takes a list of tuples with the first element being the depot name
-        and returns a modified list, with only entries for files that appear
-        in the workspace, and appending the local name (relative to the root
-        of the workarea) to each tuple.
-        '''
-
-        result = []
-        fdict = {}
-
-        for f in files:
-            df = f[0]
-            if df in self.wherecache:
-                lf = self.wherecache[df]
-                if lf is not None:
-                    result.append(f + (lf,))
-            else:
-                fdict[df] = f
-
-        if fdict:
-            flist = sorted(f for f in fdict)
-
-            n = 0
-            for where in self.run('where', files=flist, abort=False):
-                n += 1
-
-                if n % 250 == 0:
-                    if hasattr(self.ui, 'progress'):
-                        self.ui.progress('p4 where', n, unit='files', total=len(files))
-                    else:
-                        self.ui.note('%d files\r' % n)
-                        self.ui.flush()
-
-                if where['code'] == 'error':
-                    if where['severity'] == 2 and where['generic'] == 17:
-                        # file not in client view
-                        continue
-                    else:
-                        raise util.Abort(where['data'])
-
-                df = where['depotFile']
-                lf = where['path']
-                if 'unmap' in where or lf.startswith('.hg'):
-                    self.wherecache[df] = None
-                else:
-                    lf = util.pconvert(lf)
-                    if lf.startswith('%s/' % self.root):
-                        lf = lf[len(self.root) + 1:]
-                    else:
-                        raise util.Abort(_('invalid p4 local path %s') % lf)
-
-                    self.wherecache[df] = lf
-                    result.append(fdict[df] + (lf,))
-
-            if hasattr(self.ui, 'progress'):
-                self.ui.progress('p4 where', None)
-            else:
-                self.ui.note('%d files \n' % len(result))
-                self.ui.flush()
-
-            if n < len(flist):
-                raise util.Abort(_('incomplete reply from p4, reduce maxargs'))
-            elif n > len(flist):
-                raise util.Abort(_('oversized reply from p4, remove duplicates from view'))
-
-        return result
-
-
     def describe(self, change, files=None):
         '''Return p4 changelist description, user name and date.
         If the files argument is true, then also collect a list of 5-tuples
@@ -389,14 +319,55 @@ class p4client:
         date = (int(d['time']), 0)     # p4 uses UNIX epoch
 
         if files:
-            files = []
-            i = 0
-            while ('depotFile%d' % i) in d and ('rev%d' % i) in d:
-                files.append((d['depotFile%d' % i], int(d['rev%d' % i]), d['type%d' % i], self.actions[d['action%d' % i]]))
-                i += 1
-            files = self.where(files)
+            files = self.fstat(change)
 
         return desc, user, date, files
+
+
+    def fstat(self, change, all=False):
+        '''Find local names for all the files belonging to a
+        changelist.
+        Returns a list of tuples 
+            (depotname, revision, type, action, localname)
+        with only entries for files that appear in the workspace.
+        If all is unset considers only files modified by the
+        changelist, otherwise returns all files *at* that changelist.
+        '''
+        result = []
+
+        if all:
+            p4cmd = 'fstat ...@%d' % change
+        else:
+            p4cmd = 'fstat -e %d ...' % change
+
+        for d in self.run(p4cmd):
+            if len(result) % 250 == 0:
+                if hasattr(self.ui, 'progress'):
+                    self.ui.progress('p4 fstat', len(result), unit='entries')
+                else:
+                    self.ui.note('%d files\r' % len(result))
+                    self.ui.flush()
+
+            if 'desc' in d or d['clientFile'].startswith('.hg'):
+                continue
+            else:
+                df = d['depotFile']
+                rv = d['headRev']
+                tp = d['headType']
+                ac = d['headAction']
+                lf = d['clientFile']
+                lf = util.pconvert(lf)
+                if lf.startswith('%s/' % self.root):
+                    lf = lf[len(self.root) + 1:]
+                else:
+                    raise util.Abort(_('invalid p4 local path %s') % lf)
+                result.append((df, int(rv), tp, self.actions[ac], lf))
+
+        if hasattr(self.ui, 'progress'):
+            self.ui.progress('p4 fstat', None)
+        self.ui.note('%d files \n' % len(result))
+
+        return result
 
 
     def getfile(self, entry, keepsync=True):
@@ -697,12 +668,8 @@ def pull(original, ui, repo, source=None, **opts):
 
     try:
         for c in changes:
-            desc, user, date, files = client.describe(c, files=not startrev)
-            if startrev:
-                files = []
-                for d in client.run('files ...@%d' % startrev):
-                    files.append((d['depotFile'], int(d['rev']), d['type'], client.actions[d['action']]))
-                files = client.where(files)
+            desc, user, date, files = client.describe(c)
+            files = client.fstat(c, all=bool(startrev))
 
             if client.keep:
                 if startrev:
