@@ -705,11 +705,14 @@ def pull(original, ui, repo, source=None, **opts):
                 files = client.where(files)
 
             if client.keep:
-                n = client.runs('sync -f',
-                                files=[('%s#%d' % (f[-1], f[1])) for f in files],
-                                one=False, abort=False)
-                if n < len(files):
-                    raise util.Abort(_('incomplete reply from p4, reduce maxargs'))
+                if startrev:
+                    client.runs('sync -f ...@%d' % c)
+                else:
+                    n = client.runs('sync -f',
+                                    files=[('%s#%d' % (f[-1], f[1])) for f in files],
+                                    one=False, abort=False)
+                    if n < len(files):
+                        raise util.Abort(_('incomplete reply from p4, reduce maxargs'))
 
             entries = dict((f[-1],f) for f in files)
 
