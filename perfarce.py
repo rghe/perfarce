@@ -708,6 +708,8 @@ def pull(original, ui, repo, source=None, **opts):
                 if startrev:
                     client.runs('sync -f ...@%d' % c)
                 else:
+                    client.runs('revert -k', files=[f[0] for f in files],
+                                abort=False)
                     n = client.runs('sync -f',
                                     files=[('%s#%d' % (f[-1], f[1])) for f in files],
                                     one=False, abort=False)
