@@ -51,6 +51,14 @@ Five built-in commands are overridden:
  clone     If the source repository name starts with p4:// then this
            creates the destination repository and pulls all changes
            from the p4 depot into it.
+           If the option
+              --config perfarce.lowercasepaths=False
+           is True then the import forces all paths in lowercase,
+           otherwise paths are recorded unchanged.  Filename case is
+           always preserved.
+           This setting is a workaround to handle Perforce depots
+           containing a path spelled differently from file to file
+           (e.g. path/foo and PAth/bar).
 '''
 
 from mercurial import cmdutil, commands, context, copies, error, extensions, hg, node, util
@@ -97,6 +105,7 @@ class p4client(object):
             self.client = None
             self.root = None
             self.keep = ui.configbool('perfarce', 'keep', True)
+            self.lowercasepaths = ui.configbool('perfarce', 'lowercasepaths', False)
 
             # caches
             self.clientspec = {}
@@ -359,6 +368,11 @@ class p4client(object):
         else:
             p4cmd = 'fstat -e %d ...' % change
 
+        if self.lowercasepaths:
+            root = os.path.normcase(self.root)
+        else:
+            root = self.root
+
         for d in self.run(p4cmd):
             if len(result) % 250 == 0:
                 if hasattr(self.ui, 'progress'):
@@ -375,9 +389,12 @@ class p4client(object):
                 tp = d['headType']
                 ac = d['headAction']
                 lf = d['clientFile']
+                if self.lowercasepaths:
+                   pathname, fname = os.path.split(lf)
+                   lf = os.path.join(os.path.normcase(pathname), fname)
                 lf = util.pconvert(lf)
-                if lf.startswith('%s/' % self.root):
-                    lf = lf[len(self.root) + 1:]
+                if lf.startswith('%s/' % root):
+                    lf = lf[len(root) + 1:]
                 else:
                     raise util.Abort(_('invalid p4 local path %s') % lf)
                 result.append((df, int(rv), tp, self.actions[ac], lf))
@@ -738,6 +755,9 @@ def pull(original, ui, repo, source=None, **opts):
             if changes[0] != startrev:
                 raise util.Abort(_('changelist for --startrev not found'))
 
+    if client.lowercasepaths:
+        ui.status(_("converting pathnames to lowercase.\n"))
+
     tags = {}
 
     try:
@@ -856,6 +876,7 @@ def clone(original, ui, source, dest=None, **opts):
         fp.write("default = %s\n" % source)
         fp.write("\n[perfarce]\n")
         fp.write("keep = %s\n" % client.keep)
+        fp.write("lowercasepaths = %s\n" % client.lowercasepaths)
         fp.close()
 
     return r
