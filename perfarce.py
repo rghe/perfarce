@@ -206,6 +206,7 @@ class p4client:
         'return p4 submission state dictionary'
         if self.p4stat is None:
             self._readp4stat()
+        self.p4statdirty = True
         return self.p4stat
 
     def _readp4stat(self):
@@ -1016,20 +1017,24 @@ def pending(ui, repo, dest=None, **opts):
 
     changes = {}
     pending = client.getpendingdict()
-    for i in pending:
-        j = pending[i]
-        if isinstance(j,int):
-            changes.setdefault(j, []).append(i)
-    keys = changes.keys()
-    keys.sort()
 
-    len = not ui.verbose and 12 or None
-    for i in keys:
-        if i == client.SUBMITTED:
-            state = 'submitted'
-        else:
-            state = str(i)
-        ui.write('%s %s\n' % (state, ' '.join(r[:len] for r in changes[i])))
+    if opts.get('reset'):
+        client.getpendingdict().clear()
+    else:
+        for i in pending:
+            j = pending[i]
+            if isinstance(j,int):
+                changes.setdefault(j, []).append(i)
+        keys = changes.keys()
+        keys.sort()
+        
+        len = not ui.verbose and 12 or None
+        for i in keys:
+            if i == client.SUBMITTED:
+                state = 'submitted'
+            else:
+                state = str(i)
+            ui.write('%s %s\n' % (state, ' '.join(r[:len] for r in changes[i])))
 
     client.close()
 
@@ -1074,8 +1079,8 @@ cmdtable = {
     # 'command-name': (function-call, options-list, help-string)
     'p4pending':
         (   pending,
-            [ ],
-            'hg p4pending [p4://server/client]'),
+            [ ('', 'reset', None,   _('forget any pending changelists')) ],
+            'hg p4pending [--reset] [p4://server/client]'),
     'p4revert':
         (   revert,
             [ ('a', 'all', None,   _('revert all pending changelists')) ],
