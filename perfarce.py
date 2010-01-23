@@ -83,7 +83,7 @@ def loaditer(f):
         pass
 
 
-class p4client:
+class p4client(object):
 
     def __init__(self, ui, repo, path):
         'initialize a p4client class from the remote path'
@@ -112,13 +112,14 @@ class p4client:
             self.re_number = re.compile('.+ ([0-9]+) .+')
             self.actions = { 'edit':'M', 'add':'A', 'move/add':'A', 'delete':'R', 'move/delete':'R', 'purge':'R', 'branch':'A', 'integrate':'M' }
 
-            maxargs = ui.config('perfarce', 'maxargs')
-            if maxargs:
-               self.MAXARGS = int(maxargs)
-            elif os.name == 'posix':
-               self.MAXARGS = 250
-            else:
-               self.MAXARGS = 25
+            try:
+                maxargs = ui.config('perfarce', 'maxargs')
+                self.MAXARGS = int(maxargs)
+            except:
+                if os.name == 'posix':
+                    self.MAXARGS = 250
+                else:
+                    self.MAXARGS = 25
 
             s, c = path[5:].split('/')
             if ':' not in s:
@@ -267,8 +268,9 @@ class p4client:
                     code = d.get('code')
                     data = d.get('data')
                     if code is not None and data is not None:
+                        data = data.strip()
                         if abort and code == 'error':
-                            raise util.Abort('p4: %s' % data.strip())
+                            raise util.Abort('p4: %s' % data)
                         elif code == 'info':
                             self.ui.note('p4: %s\n' % data)
                     yield d
@@ -371,8 +373,44 @@ class p4client:
         return result
 
 
-    def getfile(self, entry, keepsync=True):
-        '''Return contents of a file in the p4 depot at the given revision number
+    def sync(self, change, fake=False, force=False, all=False, files=[]):
+        '''Synchronize the client with the depot at the given change.
+        Setting fake adds -k, force adds -f option. The all option is
+        not used here, but indicates that the caller wants all the files
+        at that revision, not just the files affected by the change.'''
+
+        cmd = 'sync'
+        if fake:
+            cmd += ' -k'
+        elif force:
+            cmd += ' -f'
+        if not files:
+            cmd += ' ...@%d' % change
+
+        n = 0
+        for d in self.run(cmd, files=[("%s@%d" % (f, change)) for f in files], abort=False):
+            n += 1
+            if n % 250 == 0:
+                if hasattr(self.ui, 'progress'):
+                    self.ui.progress('p4 sync', n, unit='files')
+            code = d.get('code')
+            if code == 'error':
+                data = d['data'].strip()
+                if d['generic'] == 17 or d['severity'] == 2:
+                    self.ui.note('p4: %s\n' % data)
+                else:
+                    raise util.Abort('p4: %s' % data)
+
+        if hasattr(self.ui, 'progress'):
+            self.ui.progress('p4 sync', None)
+
+        if files and n < len(files):
+            raise util.Abort(_('incomplete reply from p4, reduce maxargs'))
+
+
+    def getfile(self, entry):
+        '''Return contents of a file in the p4 depot at the given revision number.
+        If self.keep is set, assumes that the client is in sync.
         Raises IOError if the file is deleted.
         '''
 
@@ -382,8 +420,6 @@ class p4client:
         mode, keywords = self.decodetype(entry[2])
 
         if self.keep:
-            if keepsync:
-                self.runs('sync %s@%s' % (util.shellquote(entry[0]), entry[1]), abort=False)
             fn = os.sep.join([self.root, entry[-1]])
             fn = util.localpath(fn)
             if mode == 'l':
@@ -600,7 +636,7 @@ class p4client:
 
         if not self.keep:
             # delete the files in the p4 client directory
-            self.runs('sync ...@0', abort=False)
+            self.sync(0)
 
 
 # --------------------------------------------------------------------------
@@ -652,7 +688,7 @@ def pull(original, ui, repo, source=None, **opts):
 
     def getfilectx(repo, memctx, fn):
         'callback to read file data'
-        mode, contents = client.getfile(entries[fn], keepsync=False)
+        mode, contents = client.getfile(entries[fn])
         return context.memfilectx(fn, contents, 'l' in mode, 'x' in mode, None)
 
     # for clone we support a --startrev option to fold initial changelists
@@ -674,15 +710,11 @@ def pull(original, ui, repo, source=None, **opts):
 
             if client.keep:
                 if startrev:
-                    client.runs('sync -f ...@%d' % c)
+                    client.sync(c, all=True, force=True)
                 else:
                     client.runs('revert -k', files=[f[0] for f in files],
                                 abort=False)
-                    n = client.runs('sync -f',
-                                    files=[('%s#%d' % (f[-1], f[1])) for f in files],
-                                    one=False, abort=False)
-                    if n < len(files):
-                        raise util.Abort(_('incomplete reply from p4, reduce maxargs'))
+                    client.sync(c, force=True, files=[f[0] for f in files])
 
             entries = dict((f[-1],f) for f in files)
 
@@ -826,10 +858,10 @@ def push(original, ui, repo, dest=None, **opts):
 
     # sync to the last revision pulled/converted
     if client.keep:
-        client.runs('sync ...@%d' % p4id, abort=False)
+        client.sync(p4id)
     else:
-        client.runs('sync -k ...@%d' % p4id, abort=False)
-        client.runs('sync -f', files=[('%s@%d' % (f, p4id)) for f in mod], abort=False)
+        client.sync(p4id, fake=True)
+        client.sync(p4id, force=True, files=mod)
 
     # attempt to reuse an existing changelist
     use = ''
