@@ -415,33 +415,37 @@ class p4client(object):
         '''
 
         if entry[3] == 'R':
+            self.ui.debug('getfile ioerror on %r\n'%(entry,))
             raise IOError()
 
-        mode, keywords = self.decodetype(entry[2])
+        try:
+            mode, keywords = self.decodetype(entry[2])
 
-        if self.keep:
-            fn = os.sep.join([self.root, entry[-1]])
-            fn = util.localpath(fn)
-            if mode == 'l':
-                contents = os.readlink(fn)
+            if self.keep:
+                fn = os.sep.join([self.root, entry[-1]])
+                fn = util.localpath(fn)
+                if mode == 'l':
+                    contents = os.readlink(fn)
+                else:
+                    contents = file(fn, 'rb').read()
             else:
-                contents = file(fn, 'rb').read()
-        else:
-            contents = []
-            for d in self.run('print %s#%d' % (util.shellquote(entry[0]), entry[1])):
-                code = d['code']
-                if code == 'text' or code == 'binary':
-                    contents.append(d['data'])
+                contents = []
+                for d in self.run('print %s#%d' % (util.shellquote(entry[0]), entry[1])):
+                    code = d['code']
+                    if code == 'text' or code == 'binary':
+                        contents.append(d['data'])
 
-            contents = ''.join(contents)
-            if mode == 'l' and contents.endswith('\n'):
-                contents = contents[:-1]
+                contents = ''.join(contents)
+                if mode == 'l' and contents.endswith('\n'):
+                    contents = contents[:-1]
 
-        if keywords:
-            contents = keywords.sub('$\\1$', contents)
+            if keywords:
+                contents = keywords.sub('$\\1$', contents)
 
-        return mode, contents
-
+            return mode, contents
+        except Exception,e:
+            self.ui.traceback()
+            raise util.Abort(_('file %s missing in p4 workspace') % entry[-1])
 
     def labels(self, change):
         'Return p4 labels a.k.a. tags at the given changelist'
