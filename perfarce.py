@@ -53,7 +53,7 @@ Five built-in commands are overridden:
            from the p4 depot into it.
 '''
 
-from mercurial import cmdutil, commands, context, copies, extensions, hg, node, util
+from mercurial import cmdutil, commands, context, copies, error, extensions, hg, node, util
 from mercurial.i18n import _
 
 import marshal, tempfile, os, re
@@ -592,6 +592,14 @@ class p4client(object):
         if not (mod or add or rem):
             ui.status(_('no changes found\n'))
             return True, 0
+
+        # detect MQ
+        try:
+            mq = repo.changelog.nodesbetween([repo['qbase'].node()], nodes)[0]
+            if mq:
+                raise util.Abort(_('source has mq patches applied'))
+        except error.RepoLookupError:
+            pass
 
         # create description
         desc = []
