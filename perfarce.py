@@ -308,11 +308,14 @@ class p4client(object):
         return user
 
 
-    def describe(self, change, files=None):
+    def describe(self, change, local=None):
         '''Return p4 changelist description, user name and date.
-        If the files argument is true, then also collect a list of 5-tuples
+        If the local is true, then also collect a list of 5-tuples
             (depotname, revision, type, action, localname)
-        Retrieving the filenames is potentially very slow.
+        This does not work on pending changelists.
+        If local is false then the list returned holds 4-tuples
+            (depotname, revision, type, action)
+        Retrieving the local filenames is potentially very slow.
         '''
 
         self.ui.note(_('change %d\n') % change)
@@ -321,8 +324,21 @@ class p4client(object):
         user = self.getuser(d['user'])
         date = (int(d['time']), 0)     # p4 uses UNIX epoch
 
-        if files:
+        if local:
             files = self.fstat(change)
+        else:
+            files = []
+            i = 0
+            while True:
+                df = 'depotFile%d' % i
+                if df not in d:
+                    break
+                df = d['depotFile%d' % i]
+                rv = d['rev%d' % i]
+                tp = d['type%d' % i]
+                ac = d['action%d' % i]
+                files.append((df, int(rv), tp, self.actions[ac]))
+                i += 1
 
         return desc, user, date, files
 
@@ -662,7 +678,7 @@ def incoming(original, ui, repo, source='default', **opts):
 
     client, p4rev, p4id, startrev, changes = r
     for c in changes:
-        desc, user, date, files = client.describe(c, files=ui.verbose)
+        desc, user, date, files = client.describe(c, local=ui.verbose)
         tags = client.labels(c)
 
         ui.write(_('changelist:  %d\n') % c)
@@ -1029,12 +1045,12 @@ def revert(ui, repo, change=None, dest=None, **opts):
 
     for c in changes:
         try:
-            desc, user, date, files = client.describe(c, files=True)
+            desc, user, date, files = client.describe(c)
         except:
             files = None
 
         if files is not None:
-            files = [f[-1] for f in files]
+            files = [f[0] for f in files]
             ui.note(_('reverting: %s\n') % ' '.join(files))
             client.runs('revert', files=files, abort=False)
             ui.note(_('deleting: %d\n') % c)
