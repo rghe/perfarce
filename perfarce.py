@@ -487,6 +487,10 @@ class p4client(object):
             ui.traceback()
             return True, original(ui, repo, source, **opts)
 
+        # if present, --rev will be the last Perforce changeset number to get
+        stoprev = opts.get('rev')
+        stoprev = stoprev and len(stoprev) and int(stoprev[0]) or 0
+
         # for clone we support a --startrev option to fold initial changelists
         startrev = opts.get('startrev')
         startrev = startrev and int(startrev) or 0
@@ -500,11 +504,16 @@ class p4client(object):
             else:
                 p4id = 0
 
+        if stoprev:
+           p4cset = '...@%d,@%d' % (p4id, stoprev)
+        else:
+           p4cset = '...@%d,#head' % p4id
+
         if startrev < 0:
             # most recent changelists
-            p4cmd = 'changes -s submitted -m %d -L ...@%d,#head' % (-startrev, p4id)
+            p4cmd = 'changes -s submitted -m %d -L %s' % (-startrev, p4cset)
         else:
-            p4cmd = 'changes -s submitted -L ...@%d,#head' % p4id
+            p4cmd = 'changes -s submitted -L %s' % p4cset
 
         changes = []
         for d in client.run(p4cmd):
@@ -837,7 +846,7 @@ def clone(original, ui, source, dest=None, **opts):
     repo = hg.repository(ui, dest, create=True)
 
     opts['update'] = not opts['noupdate']
-    opts['force'] = opts['rev'] = None
+    opts['force'] = None
 
     try:
         r = pull(None, ui, repo, source=source, **opts)
