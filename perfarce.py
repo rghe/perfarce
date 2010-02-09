@@ -438,7 +438,7 @@ class p4client(object):
             mode, keywords = self.decodetype(entry[2])
 
             if self.keep:
-                fn = os.sep.join([self.root, entry[-1]])
+                fn = os.sep.join([self.root, entry[4]])
                 fn = util.localpath(fn)
                 if mode == 'l':
                     contents = os.readlink(fn)
@@ -461,7 +461,7 @@ class p4client(object):
             return mode, contents
         except Exception,e:
             self.ui.traceback()
-            raise util.Abort(_('file %s missing in p4 workspace') % entry[-1])
+            raise util.Abort(_('file %s missing in p4 workspace') % entry[4])
 
     def labels(self, change):
         'Return p4 labels a.k.a. tags at the given changelist'
@@ -489,7 +489,7 @@ class p4client(object):
 
         # if present, --rev will be the last Perforce changeset number to get
         stoprev = opts.get('rev')
-        stoprev = stoprev and len(stoprev) and int(stoprev[0]) or 0
+        stoprev = stoprev and max(int(r) for r in stoprev) or 0
 
         # for clone we support a --startrev option to fold initial changelists
         startrev = opts.get('startrev')
@@ -698,7 +698,7 @@ def incoming(original, ui, repo, source='default', **opts):
         ui.write(_('user:        %s\n') % user)
         ui.write(_('date:        %s\n') % util.datestr(date))
         if ui.verbose:
-            ui.write(_('files:       %s\n') % ' '.join(f[-1] for f in files))
+            ui.write(_('files:       %s\n') % ' '.join(f[4] for f in files))
 
         if desc:
             if ui.verbose:
@@ -753,7 +753,7 @@ def pull(original, ui, repo, source=None, **opts):
                                 abort=False)
                     client.sync(c, force=True, files=[f[0] for f in files])
 
-            entries = dict((f[-1],f) for f in files)
+            entries = dict((f[4],f) for f in files)
 
             nodes = client.parsenodes(desc)
             if nodes:
@@ -770,7 +770,7 @@ def pull(original, ui, repo, source=None, **opts):
                 extra = {'p4':c}
 
             ctx = context.memctx(repo, (p4rev, parent), desc,
-                                 [f[-1] for f in files], getfilectx,
+                                 [f[4] for f in files], getfilectx,
                                  user, date, extra)
 
             if nodes:
