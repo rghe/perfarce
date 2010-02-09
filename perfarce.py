@@ -43,6 +43,15 @@ Five built-in commands are overridden:
            is False then the import does not leave files in the p4
            workarea, otherwise the p4 workarea will be updated
            with the new files.
+           The option
+              --config perfarce.clientuser=search replace
+           can be used to enable quasi-multiuser operation, where
+           several users submit changes to p4 with the same user name
+           and have their real user name in the p4 client spec.
+           The search and replace regular expressions describe
+           the substitution to be made to turn a client spec name
+           into a user name. If the search regex does not match
+           then the username is left unchanged.
 
  incoming  If the source repository name starts with p4:// then this
            reports changes in the p4 depot that are not yet in the
@@ -64,7 +73,7 @@ Five built-in commands are overridden:
 from mercurial import cmdutil, commands, context, copies, error, extensions, hg, node, util
 from mercurial.i18n import _
 
-import marshal, tempfile, os, re
+import marshal, tempfile, os, re, string
 
 def uisetup(ui):
     '''monkeypatch pull and push for p4:// support'''
@@ -348,6 +357,14 @@ class p4client(object):
                 ac = d['action%d' % i]
                 files.append((df, int(rv), tp, self.actions[ac]))
                 i += 1
+
+        # quasi-multiuser operation, extract user name from client
+        cu = self.ui.config("perfarce","clientuser")
+        if cu:
+            cus, cur = cu.split(" ",1)
+            u, f = re.subn(cus, cur, d['client'])
+            if f:
+                user = string.capwords(u)
 
         return desc, user, date, files
 
