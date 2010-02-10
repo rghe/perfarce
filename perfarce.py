@@ -44,7 +44,7 @@ Five built-in commands are overridden:
            workarea, otherwise the p4 workarea will be updated
            with the new files.
            The option
-              --config perfarce.clientuser=search replace
+              --config perfarce.clientuser="search replace"
            can be used to enable quasi-multiuser operation, where
            several users submit changes to p4 with the same user name
            and have their real user name in the p4 client spec.
@@ -71,6 +71,7 @@ Five built-in commands are overridden:
 '''
 
 from mercurial import cmdutil, commands, context, copies, error, extensions, hg, node, util
+from mercurial.node import hex, short
 from mercurial.i18n import _
 
 import marshal, tempfile, os, re, string
@@ -120,7 +121,6 @@ class p4client(object):
             self.clientspec = {}
             self.usercache = {}
             self.p4stat = None
-            self.p4statdirty = False
 
             # helpers to parse p4 output
             self.re_type = re.compile('([a-z]+)?(text|binary|symlink|apple|resource|unicode|utf\d+)(\+\w+)?$')
@@ -160,12 +160,6 @@ class p4client(object):
             raise util.Abort(_('not a p4 repository'))
 
 
-    def close(self):
-        'clean up any client state'
-        if self.p4statdirty:
-            self._writep4stat()
-
-
     def latest(self, tags=False):
         '''Find the most recent changelist which has the p4 extra data which
         gives the p4 changelist it was converted from'''
@@ -202,62 +196,18 @@ class p4client(object):
         return mode, keywords
 
 
-    SUBMITTED = -1
-    def getpending(self, node):
-        '''return p4 submission state for node: SUBMITTED, a changelist
-        number if pending or None if not in a changelist'''
-        if self.p4stat is None:
-            self._readp4stat()
-        return self.p4stat.get(node, None)
-
-    def setpending(self, node, state):
-        '''set p4 submission state for node: SUBMITTED, a changelist
-        number if pending or None if not in a changelist'''
-        r = self.getpending(node)
-        if r != state:
-            self.p4statdirty = True
-            if state is None:
-                del self.p4stat[node]
-            else:
-                self.p4stat[node] = state
-
-    def getpendingdict(self):
-        'return p4 submission state dictionary'
-        if self.p4stat is None:
-            self._readp4stat()
-        self.p4statdirty = True
-        return self.p4stat
-
-    def _readp4stat(self):
-        'read .hg/p4stat file'
-        self.p4stat = {}
-        try:
-            for line in self.repo.opener('p4stat', 'r', text=True):
-                line = line.strip().split(' ',1)
-                if line[1].startswith('s'):
-                    state = self.SUBMITTED
-                else:
-                    state = int(line[1])
-                self.p4stat[line[0]] = state
-        except:
-            self.ui.traceback()
-            self.ui.note(_('error reading p4stat\n'))
-        self.ui.debug('read p4stat=%r\n' % self.p4stat)
-        self.p4statdirty = False
-
-    def _writep4stat(self):
-        'write .hg/p4stat file'
-        fd = self.repo.opener('p4stat', 'w', text=True)
-        for n in self.p4stat:
-            state = self.p4stat[n]
-            if state == self.SUBMITTED:
-                state = 'submitted'
-            else:
-                state = str(state)
-            fd.write('%s %s\n' % (n, state))
-        fd.close()
-        self.p4statdirty = False
-        self.ui.debug('write p4stat=%r\n' % self.p4stat)
+    def parsenodes(self, desc):
+        'find revisions in p4 changelist description'
+        m = self.re_hgid.search(desc)
+        nodes = []
+        if m:
+            try:
+                nodes = self.repo.changelog.nodesbetween(
+                    [self.repo[m.group(2)].node()], [self.repo[m.group(4) or m.group(2)].node()])[0]
+            except:
+                self.ui.traceback()
+                self.ui.note(_('ignoring hg revision range %s from p4\n' % m.group(1)))
+        return nodes
 
 
     def run(self, cmd, files=[], abort=True):
@@ -272,7 +222,7 @@ class p4client(object):
             c.append(self.client)
         c.append(cmd)
 
-        old=os.getcwd()
+        old = os.getcwd()
         try:
             if self.root:
                 os.chdir(self.root)
@@ -307,6 +257,46 @@ class p4client(object):
         if count == 1 and one:
             return value
         return count
+
+
+    SUBMITTED = -1
+    def getpending(self, node):
+        '''return p4 submission state for node: SUBMITTED, a changelist
+        number if pending or None if not in a changelist'''
+        if self.p4stat is None:
+            self._readp4stat()
+        return self.p4stat.get(node, None)
+
+    def getpendingdict(self):
+        'return p4 submission state dictionary'
+        if self.p4stat is None:
+            self._readp4stat()
+        return self.p4stat
+
+    def _readp4stat(self):
+        '''read pending and submitted changelists into pending cache'''
+        self.p4stat = {}
+
+        p4rev, p4id = self.latest()
+
+        def helper(self,d,p4id):
+            c = int(d['change'])
+            if c == p4id:
+                return
+
+            if d['status'] == 'submitted':
+                state = self.SUBMITTED
+            else:
+                state = c
+            for n in self.parsenodes(d['desc']):
+                self.p4stat[hex(n)] = state
+
+        for d in self.run('changes -l -c %s ...@%d,#head' %
+                           (util.shellquote(self.client), p4id)):
+            helper(self,d,p4id)
+        for d in self.run('changes -l -c %s -s pending' %
+                           (util.shellquote(self.client))):
+            helper(self,d,p4id)
 
 
     def getuser(self, user):
@@ -493,9 +483,10 @@ class p4client(object):
                 contents = keywords.sub('$\\1$', contents)
 
             return mode, contents
-        except Exception,e:
+        except Exception, e:
             self.ui.traceback()
             raise util.Abort(_('file %s missing in p4 workspace') % entry[4])
+
 
     def labels(self, change):
         'Return p4 labels a.k.a. tags at the given changelist'
@@ -676,32 +667,15 @@ class p4client(object):
         return False, (client, p4rev, p4id, nodes, ctx2, desc, mod, add, rem, cpy)
 
 
-    def parsenodes(self, desc):
-        'find revisions in p4 changelist description'
-        m = self.re_hgid.search(desc)
-        nodes = []
-        if m:
-            try:
-                nodes = self.repo.changelog.nodesbetween(
-                    [self.repo[m.group(2)].node()], [self.repo[m.group(4) or m.group(2)].node()])[0]
-            except:
-                self.ui.traceback()
-                self.ui.note(_('ignoring hg revision range %s from p4\n' % m.group(1)))
-        return nodes
-
-
     def submit(self, nodes, change):
-        '''submit one changelist to p4, mark nodes in p4stat and optionally
-        delete the files added or modified in the p4 workarea'''
+        '''submit one changelist to p4 and optionally delete the files added 
+        or modified in the p4 workarea'''
 
         cl = None
         for d in self.run('submit -c %s' % change):
             if d['code'] == 'error':
                 raise util.Abort(_('error submitting p4 change %s: %s') % (change, d['data']))
             cl = d.get('submittedChange', cl)
-
-        for n in nodes:
-            self.setpending(self.repo[n].hex(), self.SUBMITTED)
 
         self.ui.note(_('submitted changelist %s\n') % cl)
 
@@ -743,7 +717,6 @@ def incoming(original, ui, repo, source='default', **opts):
                 ui.write(_('summary:     %s\n') % desc.splitlines()[0])
 
         ui.write('\n')
-    client.close()
 
 
 def pull(original, ui, repo, source=None, **opts):
@@ -790,7 +763,7 @@ def pull(original, ui, repo, source=None, **opts):
                                 abort=False)
                     client.sync(c, force=True, files=[f[0] for f in files])
 
-            entries = dict((f[4],f) for f in files)
+            entries = dict((f[4], f) for f in files)
 
             nodes = client.parsenodes(desc)
             if nodes:
@@ -809,10 +782,6 @@ def pull(original, ui, repo, source=None, **opts):
             ctx = context.memctx(repo, (p4rev, parent), desc,
                                  [f[4] for f in files], getfilectx,
                                  user, date, extra)
-
-            if nodes:
-                for n in nodes:
-                    client.setpending(repo[n].hex(), None)
 
             p4rev = repo.commitctx(ctx)
             ctx = repo[p4rev]
@@ -848,8 +817,6 @@ def pull(original, ui, repo, source=None, **opts):
             p4rev = repo.commitctx(ctx)
             ctx = repo[p4rev]
             ui.note(_('added changeset %d:%s\n') % (ctx.rev(), ctx))
-
-        client.close()
 
     if opts['update']:
         return hg.update(repo, 'tip')
@@ -920,7 +887,6 @@ def outgoing(original, ui, repo, dest=None, **opts):
             for f in files:
                 ui.write('%s %s\n' % (char, repo.pathto(f, cwd)))
         ui.write('\n')
-    client.close()
 
 
 def push(original, ui, repo, dest=None, **opts):
@@ -1017,15 +983,11 @@ def push(original, ui, repo, dest=None, **opts):
         ui.note(_('opening for delete: %s\n') % ' '.join(rem))
         client.runs('delete -c %s' % use, files=rem)
 
-    # submit the changelist to perforce if --submit was given
+    # submit the changelist to p4 if --submit was given
     if opts['submit'] or ui.configbool('perfarce', 'submit', default=False):
         client.submit(nodes, use)
     else:
-        for n in nodes:
-            client.setpending(repo[n].hex(), int(use))
         ui.note(_('pending changelist %s\n') % use)
-
-    client.close()
 
 
 # --------------------------------------------------------------------------
@@ -1064,8 +1026,6 @@ def submit(ui, repo, change=None, dest=None, **opts):
     else:
         raise util.Abort(_('no changelists specified'))
 
-    client.close()
-
 
 def revert(ui, repo, change=None, dest=None, **opts):
     '''revert a pending changelist and all opened files
@@ -1082,7 +1042,7 @@ def revert(ui, repo, change=None, dest=None, **opts):
         pending = client.getpendingdict()
         for i in pending:
             i = pending[i]
-            if isinstance(i,int):
+            if i != client.SUBMITTED:
                 changes[i] = True
         changes = changes.keys()
         if len(changes) == 0:
@@ -1108,11 +1068,6 @@ def revert(ui, repo, change=None, dest=None, **opts):
             if client.getpending(rev) == c:
                 reverted.append(rev)
 
-        for rev in reverted:
-            client.setpending(rev, None)
-
-    client.close()
-
 
 def pending(ui, repo, dest=None, **opts):
     'report changelists already pushed and pending for submit in p4'
@@ -1130,7 +1085,7 @@ def pending(ui, repo, dest=None, **opts):
     else:
         for i in pending:
             j = pending[i]
-            if isinstance(j,int):
+            if i != client.SUBMITTED:
                 changes.setdefault(j, []).append(i)
         keys = changes.keys()
         keys.sort()
@@ -1142,8 +1097,6 @@ def pending(ui, repo, dest=None, **opts):
             else:
                 state = str(i)
             ui.write('%s %s\n' % (state, ' '.join(r[:len] for r in changes[i])))
-
-    client.close()
 
 
 def identify(ui, repo, *args, **opts):
@@ -1186,16 +1139,16 @@ cmdtable = {
     # 'command-name': (function-call, options-list, help-string)
     'p4pending':
         (   pending,
-            [ ('', 'reset', None,   _('forget any pending changelists')) ],
-            'hg p4pending [--reset] [p4://server/client]'),
+            [ ],
+            'hg p4pending [p4://server/client]'),
     'p4revert':
         (   revert,
             [ ('a', 'all', None,   _('revert all pending changelists')) ],
-            'hg p4revert [-a] changelist... [p4://server/client]'),
+            'hg p4revert [-a] changelist [p4://server/client]'),
     'p4submit':
         (   submit,
             [ ('a', 'all', None,   _('submit all pending changelists')) ],
-            'hg p4submit [-a] changelist... [p4://server/client]'),
+            'hg p4submit [-a] changelist [p4://server/client]'),
     'p4identify':
         (   identify,
             [ ('r', 'rev', '',   _('identify the specified revision')),
