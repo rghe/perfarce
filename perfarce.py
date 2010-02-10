@@ -586,8 +586,7 @@ class p4client(object):
             for end in [0, -1]:
                 while nodes:
                     n = repo[nodes[end]]
-                    pending = client.getpending(n.hex())
-                    if pending is not None:
+                    if client.getpending(n.hex()) is not None:
                         del nodes[end]
                         trim = True
                     else:
@@ -602,8 +601,7 @@ class p4client(object):
             for n in nodes:
                 n = repo[n]
                 fail = False
-                pending = client.getpending(n.hex())
-                if pending is not None:
+                if client.getpending(n.hex()) is not None:
                     fail = True
                 for ctx3 in n.children():
                     extra = ctx3.extra()
@@ -1063,11 +1061,6 @@ def revert(ui, repo, change=None, dest=None, **opts):
             ui.note(_('deleting: %d\n') % c)
             client.runs('change -d %d' %c , abort=False)
 
-        reverted = []
-        for rev in client.getpendingdict():
-            if client.getpending(rev) == c:
-                reverted.append(rev)
-
 
 def pending(ui, repo, dest=None, **opts):
     'report changelists already pushed and pending for submit in p4'
@@ -1080,23 +1073,20 @@ def pending(ui, repo, dest=None, **opts):
     changes = {}
     pending = client.getpendingdict()
 
-    if opts.get('reset'):
-        client.getpendingdict().clear()
-    else:
-        for i in pending:
-            j = pending[i]
-            if i != client.SUBMITTED:
-                changes.setdefault(j, []).append(i)
-        keys = changes.keys()
-        keys.sort()
-        
-        len = not ui.verbose and 12 or None
-        for i in keys:
-            if i == client.SUBMITTED:
-                state = 'submitted'
-            else:
-                state = str(i)
-            ui.write('%s %s\n' % (state, ' '.join(r[:len] for r in changes[i])))
+    for i in pending:
+        j = pending[i]
+        if i != client.SUBMITTED:
+            changes.setdefault(j, []).append(i)
+    keys = changes.keys()
+    keys.sort()
+    
+    len = not ui.verbose and 12 or None
+    for i in keys:
+        if i == client.SUBMITTED:
+            state = 'submitted'
+        else:
+            state = str(i)
+        ui.write('%s %s\n' % (state, ' '.join(r[:len] for r in changes[i])))
 
 
 def identify(ui, repo, *args, **opts):
