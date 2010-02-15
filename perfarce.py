@@ -44,6 +44,9 @@ Five built-in commands are overridden:
            workarea, otherwise the p4 workarea will be updated
            with the new files.
            The option
+              --config perfarce.tags=False
+           can be used to disable pulling p4 tags (a.k.a. labels).
+           The option
               --config perfarce.clientuser="search replace"
            can be used to enable quasi-multiuser operation, where
            several users submit changes to p4 with the same user name
@@ -116,6 +119,7 @@ class p4client(object):
             self.root = None
             self.keep = ui.configbool('perfarce', 'keep', True)
             self.lowercasepaths = ui.configbool('perfarce', 'lowercasepaths', False)
+            self.tags = ui.configbool('perfarce', 'tags', True)
 
             # caches
             self.clientspec = {}
@@ -492,10 +496,11 @@ class p4client(object):
         'Return p4 labels a.k.a. tags at the given changelist'
 
         tags = []
-        for d in self.run('labels ...@%d,%d' % (change, change)):
-            l = d.get('label')
-            if l:
-                tags.append(l)
+        if self.tags:
+            for d in self.run('labels ...@%d,%d' % (change, change)):
+                l = d.get('label')
+                if l:
+                    tags.append(l)
 
         return tags
 
@@ -857,6 +862,8 @@ def clone(original, ui, source, dest=None, **opts):
         fp.write("\n[perfarce]\n")
         fp.write("keep = %s\n" % client.keep)
         fp.write("lowercasepaths = %s\n" % client.lowercasepaths)
+        fp.write("tags = %s\n" % client.tags)
+
         cu = self.ui.config("perfarce", "clientuser")
         if cu:
             fp.write("clientuser = %s\n" % cu)
