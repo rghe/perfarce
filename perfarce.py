@@ -504,8 +504,7 @@ class p4client(object):
     def pullcommon(original, ui, repo, source, **opts):
         'Shared code for pull and incoming'
 
-        source, revs, checkout = hg.parseurl(ui.expandpath(source or 'default'), opts.get('rev'))
-
+        source = ui.expandpath(source or 'default')
         try:
             client = p4client(ui, repo, source)
         except:
@@ -554,8 +553,7 @@ class p4client(object):
     def pushcommon(out, original, ui, repo, dest, **opts):
         'Shared code for push and outgoing'
 
-        dest, revs, co = hg.parseurl(ui.expandpath(dest or 'default-push',
-                                                   dest or 'default'), opts.get('rev'))
+        dest = ui.expandpath(dest or 'default-push', dest or 'default')
         try:
             client = p4client(ui, repo, dest)
         except:
@@ -859,6 +857,9 @@ def clone(original, ui, source, dest=None, **opts):
         fp.write("\n[perfarce]\n")
         fp.write("keep = %s\n" % client.keep)
         fp.write("lowercasepaths = %s\n" % client.lowercasepaths)
+        cu = self.ui.config("perfarce", "clientuser")
+        if cu:
+            fp.write("clientuser = %s\n" % cu)
         fp.close()
 
     return r
@@ -994,10 +995,9 @@ def submit(ui, repo, change=None, dest=None, **opts):
     '''submit a changelist to the p4 depot
     then update the local repository state.'''
 
-    dest, revs, co = hg.parseurl(ui.expandpath(dest or 'default-push',
-                                               dest or 'default'))
-
+    dest = ui.expandpath(dest or 'default-push', dest or 'default')
     client = p4client(ui, repo, dest)
+
     if change:
         change = int(change)
         desc, user, date, files = client.describe(change)
@@ -1029,10 +1029,9 @@ def revert(ui, repo, change=None, dest=None, **opts):
     '''revert a pending changelist and all opened files
     then update the local repository state.'''
 
-    dest, revs, co = hg.parseurl(ui.expandpath(dest or 'default-push',
-                                               dest or 'default'))
-
+    dest = ui.expandpath(dest or 'default-push', dest or 'default')
     client = p4client(ui, repo, dest)
+
     if change:
         changes = [int(change)]
     elif opts['all']:
@@ -1065,9 +1064,7 @@ def revert(ui, repo, change=None, dest=None, **opts):
 def pending(ui, repo, dest=None, **opts):
     'report changelists already pushed and pending for submit in p4'
 
-    dest, revs, co = hg.parseurl(ui.expandpath(dest or 'default-push',
-                                               dest or 'default'))
-
+    dest = ui.expandpath(dest or 'default-push', dest or 'default')
     client = p4client(ui, repo, dest)
 
     changes = {}
