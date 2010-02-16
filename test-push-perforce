@@ -105,7 +105,7 @@ data() {
    DATA=$((DATA+1))
 }
 
-rm -fr $P4ROOT $P4PWD/src $P4PWD/dst $P4PWD/new || true
+rm -fr $P4ROOT $P4PWD/src $P4PWD/dst $P4PWD/dst2 $P4PWD/new || true
 
 echo % start the p4 server
 [ ! -d $P4ROOT ] && mkdir $P4ROOT
@@ -315,5 +315,14 @@ if [ $SERVER -ge 2005 ] ; then
     hg $HGDEBUG pull --update
     check_contents
 fi
+
+echo % clone
+cd ..
+hg clone p4://$P4PORT/$P4CLIENT dst2
+
+cd dst2
+hg $HGDEBUG up
+
+check_contents
 
 # EOF
