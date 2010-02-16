@@ -867,8 +867,7 @@ def clone(original, ui, source, dest=None, **opts):
         fp.write("keep = %s\n" % client.keep)
         fp.write("lowercasepaths = %s\n" % client.lowercasepaths)
         fp.write("tags = %s\n" % client.tags)
-
-        cu = self.ui.config("perfarce", "clientuser")
+        cu = ui.config("perfarce", "clientuser")
         if cu:
             fp.write("clientuser = %s\n" % cu)
         fp.close()
