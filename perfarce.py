@@ -622,14 +622,14 @@ class p4client(object):
             mod, add, rem = repo.status(node1=ctx1.node(), node2=ctx2.node())[:3]
             mod = [(f, ctx2.flags(f)) for f in mod]
             add = [(f, ctx2.flags(f)) for f in add]
-            rem = [(f, None) for f in rem]
+            rem = [(f, "") for f in rem]
 
             cpy = copies.copies(repo, ctx1, ctx2, repo[node.nullid])[0]
 
             # forget about copies with changes to the data
             forget = []
             for c in cpy:
-                if ctx2.flags(c) != ctx1.flags(c) or ctx1[c].cmp(ctx2[c].data()):
+                if ctx2.flags(c) != ctx1.flags(c) or ctx1[cpy[c]].cmp(ctx2[c].data()):
                     forget.append(c)
             for c in forget:
                 del cpy[c]
