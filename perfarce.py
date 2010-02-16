@@ -620,12 +620,16 @@ class p4client(object):
             cpy = {}
         else:
             mod, add, rem = repo.status(node1=ctx1.node(), node2=ctx2.node())[:3]
+            mod = [(f, ctx2.flags(f)) for f in mod]
+            add = [(f, ctx2.flags(f)) for f in add]
+            rem = [(f, None) for f in rem]
+
             cpy = copies.copies(repo, ctx1, ctx2, repo[node.nullid])[0]
 
             # forget about copies with changes to the data
             forget = []
             for c in cpy:
-                if ctx2[c].data() != ctx1[cpy[c]].data():
+                if ctx2.flags(c) != ctx1.flags(c) or ctx1[c].cmp(ctx2[c].data()):
                     forget.append(c)
             for c in forget:
                 del cpy[c]
@@ -634,7 +638,7 @@ class p4client(object):
             for changes in [mod, add, rem]:
                 i = 0
                 while i < len(changes):
-                    f = changes[i]
+                    f = changes[i][0]
                     if f.startswith('.hg'):
                         del changes[i]
                     else:
@@ -891,7 +895,7 @@ def outgoing(original, ui, repo, dest=None, **opts):
         cwd = repo.getcwd()
         for char, files in zip('MAR', (mod, add, rem)):
             for f in files:
-                ui.write('%s %s\n' % (char, repo.pathto(f, cwd)))
+                ui.write('%s %s\n' % (char, repo.pathto(f[0], cwd)))
         ui.write('\n')
 
 
@@ -908,7 +912,7 @@ def push(original, ui, repo, dest=None, **opts):
         client.sync(p4id)
     else:
         client.sync(p4id, fake=True)
-        client.sync(p4id, force=True, files=mod)
+        client.sync(p4id, force=True, files=[f[0] for f in mod])
 
     # attempt to reuse an existing changelist
     use = ''
@@ -918,8 +922,9 @@ def push(original, ui, repo, dest=None, **opts):
 
     # revert any other changes to the files in existing changelist
     if use:
-        ui.note(_('reverting: %s\n') % ' '.join(mod+add+rem))
-        client.runs('revert -c %s' % use, files=mod + add + rem, abort=False)
+        ui.note(_('reverting: %s\n') % ' '.join(f[0] for f in mod + add + rem))
+        client.runs('revert -c %s' % use, 
+                    files=[f[0] for f in mod + add + rem], abort=False)
 
     # get changelist data, and update it
     changelist = client.runs('change -o %s' % use)
@@ -956,29 +961,44 @@ def push(original, ui, repo, dest=None, **opts):
         raise util.Abort(_('did not get changelist number from p4'))
 
     # sort out the copies from the adds
-    ntg = [(cpy[f], f) for f in add if f in cpy]
-    add = [f for f in add if f not in cpy]
+    ntg = [(cpy[f[0]], f[0]) for f in add if f[0] in cpy]
+    add = [f for f in add if f[0] not in cpy]
+
+    def modal(note, cmd, files):
+        'Run command grouped by file mode'
+        ui.note(note % ' '.join(f[0] for f in files))
+        modes = set(f[1] for f in files)
+        for mode in modes:
+            opt = ""
+            if 'l' in mode:
+                opt = "symlink"
+            if 'x' in mode:
+                opt += "+x"
+            opt = opt and "-t " + opt
+            partial = [f[0] for f in files if f[1]==mode]
+            if partial:
+                client.runs(cmd + opt, files=partial)
 
     # now add/edit/delete the files
     if mod:
-        ui.note(_('opening for edit: %s\n') % ' '.join(mod))
-        client.runs('edit -c %s' % use, files=mod)
+        modal(_('opening for edit: %s\n'), 'edit -c %s' % use, mod)
 
     if mod or add:
         ui.note(_('retrieving file contents...\n'))
+        opener = util.opener(client.root)
 
-        for f in mod + add:
-            out = os.path.join(client.root, f)
-            ui.debug(_('writing: %s\n') % out)
-            util.makedirs(os.path.dirname(out))
-            fp = cmdutil.make_file(repo, out, ctx.node(), pathname=f)
-            data = ctx[f].data()
-            fp.write(data)
-            fp.close()
+        for name, mode in mod + add:
+            ui.debug(_('writing: %s\n') % name)
+            if 'l' in mode:
+                opener.symlink(ctx[name].data(), name)
+            else:
+                fp = opener(name, mode="w")
+                fp.write(ctx[name].data())
+                fp.close()
+            util.set_flags(os.path.join(client.root, name), 'l' in mode, 'x' in mode)
 
     if add:
-        ui.note(_('opening for add: %s\n') % ' '.join(add))
-        client.runs('add -c %s' % use, files=add)
+        modal(_('opening for add: %s\n'), 'add -c %s' % use, add)
 
     if ntg:
         ui.note(_('opening for integrate: %s\n') % ' '.join(f[1] for f in ntg))
@@ -986,8 +1006,7 @@ def push(original, ui, repo, dest=None, **opts):
             client.runs('integrate -c %s %s %s' % (use, f[0], f[1]))
 
     if rem:
-        ui.note(_('opening for delete: %s\n') % ' '.join(rem))
-        client.runs('delete -c %s' % use, files=rem)
+        modal(_('opening for delete: %s\n'), 'delete -c %s' % use, rem)
 
     # submit the changelist to p4 if --submit was given
     if opts['submit'] or ui.configbool('perfarce', 'submit', default=False):
