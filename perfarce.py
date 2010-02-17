@@ -973,7 +973,7 @@ def push(original, ui, repo, dest=None, **opts):
                 opt = "symlink"
             if 'x' in mode:
                 opt += "+x"
-            opt = opt and "-t " + opt
+            opt = opt and " -t " + opt
             partial = [f[0] for f in files if f[1]==mode]
             if partial:
                 client.runs(cmd + opt, files=partial)
