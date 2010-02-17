@@ -380,7 +380,7 @@ class p4client(object):
             p4cmd = 'fstat -e %d ...' % change
 
         if self.lowercasepaths:
-            root = os.path.normcase(self.root)
+            root = util.pconvert(os.path.normcase(self.root))
         else:
             root = self.root
 
