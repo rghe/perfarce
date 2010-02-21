@@ -160,7 +160,7 @@ class p4client(object):
                 self.clientspec = d
                 self.client = c
         except:
-            ui.traceback()
+            if ui.traceback:ui.traceback()
             raise util.Abort(_('not a p4 repository'))
 
 
@@ -209,7 +209,7 @@ class p4client(object):
                 nodes = self.repo.changelog.nodesbetween(
                     [self.repo[m.group(2)].node()], [self.repo[m.group(4) or m.group(2)].node()])[0]
             except:
-                self.ui.traceback()
+                if self.ui.traceback:self.ui.traceback()
                 self.ui.note(_('ignoring hg revision range %s from p4\n' % m.group(1)))
         return nodes
 
@@ -488,7 +488,7 @@ class p4client(object):
 
             return mode, contents
         except Exception, e:
-            self.ui.traceback()
+            if self.ui.traceback:self.ui.traceback()
             raise util.Abort(_('file %s missing in p4 workspace') % entry[4])
 
 
@@ -513,7 +513,7 @@ class p4client(object):
         try:
             client = p4client(ui, repo, source)
         except:
-            ui.traceback()
+            if ui.traceback:ui.traceback()
             return True, original(ui, repo, source, **opts)
 
         # if present, --rev will be the last Perforce changeset number to get
@@ -562,7 +562,7 @@ class p4client(object):
         try:
             client = p4client(ui, repo, dest)
         except:
-            ui.traceback()
+            if ui.traceback:ui.traceback()
             return True, original(ui, repo, dest, **opts)
 
         p4rev, p4id = client.latest(tags=True)
@@ -833,7 +833,7 @@ def clone(original, ui, source, dest=None, **opts):
     try:
         client = p4client(ui, None, source)
     except:
-        ui.traceback()
+        if ui.traceback:ui.traceback()
         return original(ui, source, dest, **opts)
 
     if dest is None:
