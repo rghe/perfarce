@@ -366,7 +366,7 @@ class p4client(object):
     def fstat(self, change, all=False):
         '''Find local names for all the files belonging to a
         changelist.
-        Returns a list of tuples 
+        Returns a list of tuples
             (depotname, revision, type, action, localname)
         with only entries for files that appear in the workspace.
         If all is unset considers only files modified by the
@@ -673,7 +673,7 @@ class p4client(object):
 
 
     def submit(self, nodes, change):
-        '''submit one changelist to p4 and optionally delete the files added 
+        '''submit one changelist to p4 and optionally delete the files added
         or modified in the p4 workarea'''
 
         cl = None
@@ -922,7 +922,7 @@ def push(original, ui, repo, dest=None, **opts):
     # revert any other changes to the files in existing changelist
     if use:
         ui.note(_('reverting: %s\n') % ' '.join(f[0] for f in mod + add + rem))
-        client.runs('revert -c %s' % use, 
+        client.runs('revert -c %s' % use,
                     files=[f[0] for f in mod + add + rem], abort=False)
 
     # get changelist data, and update it
@@ -976,7 +976,11 @@ def push(original, ui, repo, dest=None, **opts):
             opt = opt and " -t " + opt
             partial = [f[0] for f in files if f[1]==mode]
             if partial:
-                client.runs(cmd + opt, files=partial)
+                for d in client.run(cmd + opt, files=partial):
+                    if d['code'] == 'info':
+                        data = d['data']
+                        if "- use 'reopen'" in data:
+                            raise util.Abort('p4: %s' % data)
 
     # now add/edit/delete the files
     if mod:
@@ -1101,7 +1105,7 @@ def pending(ui, repo, dest=None, **opts):
             changes.setdefault(j, []).append(i)
     keys = changes.keys()
     keys.sort()
-    
+
     len = not ui.verbose and 12 or None
     for i in keys:
         if i == client.SUBMITTED:
