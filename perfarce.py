@@ -691,7 +691,7 @@ class p4client(object):
         return False, (client, p4rev, p4id, nodes, ctx2, desc, mod, add, rem, cpy)
 
 
-    def submit(self, nodes, change):
+    def submit(self, change):
         '''submit one changelist to p4 and optionally delete the files added
         or modified in the p4 workarea'''
 
@@ -1032,7 +1032,7 @@ def push(original, ui, repo, dest=None, **opts):
 
     # submit the changelist to p4 if --submit was given
     if opts['submit'] or ui.configbool('perfarce', 'submit', default=False):
-        client.submit(nodes, use)
+        client.submit(use)
     else:
         ui.note(_('pending changelist %s\n') % use)
 
@@ -1076,8 +1076,7 @@ def submit(ui, repo, *changes, **opts):
     for c in changes:
         ui.status(_('submitting: %d\n') % c)
         desc, user, date, files = client.describe(c)
-        nodes = client.parsenodes(desc)
-        client.submit(nodes, c)
+        client.submit(c)
 
 
 def revert(ui, repo, *changes, **opts):
