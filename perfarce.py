@@ -339,6 +339,49 @@ class p4client(object):
         return user
 
 
+    def change(self, change=None, description=None):
+        '''Create a new p4 changelist or update an existing changelist with 
+        the given description. Returns the changelist number as a string.'''
+
+        # get changelist data, and update it
+        changelist = self.runs('change -o %s' % (change or ''))
+        
+        if description is not None:
+            changelist['Description'] = description
+
+        fn = None
+        try:
+            # write changelist data to a temporary file
+            fd, fn = tempfile.mkstemp(prefix='hg-p4-')
+            fp = os.fdopen(fd, 'wb')
+            marshal.dump(changelist, fp)
+            fp.close()
+
+            # update p4 changelist
+            d = self.runs('change -i <%s' % util.shellquote(fn))
+            data = d['data']
+            if d['code'] == 'info':
+                if not self.ui.verbose:
+                    self.ui.status('p4: %s\n' % data)
+                if not change:
+                    m = self.re_number.match(data)
+                    if m:
+                        change = m.group(1)
+            else:
+                raise util.Abort(_('error creating p4 change: %s') % data)
+
+        finally:
+            try:
+                if fn: os.unlink(fn)
+            except:
+                pass
+
+        if not change:
+            raise util.Abort(_('did not get changelist number from p4'))
+        
+        return change
+
+
     def describe(self, change, local=None):
         '''Return p4 changelist description, user name and date.
         If the local is true, then also collect a list of 5-tuples
@@ -524,6 +567,23 @@ class p4client(object):
         return tags
 
 
+    def submit(self, change):
+        '''submit one changelist to p4 and optionally delete the files added 
+        or modified in the p4 workarea'''
+
+        cl = None
+        for d in self.run('submit -c %s' % change):
+            if d['code'] == 'error':
+                raise util.Abort(_('error submitting p4 change %s: %s') % (change, d['data']))
+            cl = d.get('submittedChange', cl)
+
+        self.ui.note(_('submitted changelist %s\n') % cl)
+
+        if not self.keep:
+            # delete the files in the p4 client directory
+            self.sync(0)
+
+
     @staticmethod
     def pullcommon(original, ui, repo, source, **opts):
         'Shared code for pull and incoming'
@@ -689,23 +749,6 @@ class p4client(object):
         desc='\n* * *\n'.join(desc) + '\n\n{{mercurial %s}}\n' % (':'.join(h))
 
         return False, (client, p4rev, p4id, nodes, ctx2, desc, mod, add, rem, cpy)
-
-
-    def submit(self, change):
-        '''submit one changelist to p4 and optionally delete the files added
-        or modified in the p4 workarea'''
-
-        cl = None
-        for d in self.run('submit -c %s' % change):
-            if d['code'] == 'error':
-                raise util.Abort(_('error submitting p4 change %s: %s') % (change, d['data']))
-            cl = d.get('submittedChange', cl)
-
-        self.ui.note(_('submitted changelist %s\n') % cl)
-
-        if not self.keep:
-            # delete the files in the p4 client directory
-            self.sync(0)
 
 
 # --------------------------------------------------------------------------
@@ -944,39 +987,7 @@ def push(original, ui, repo, dest=None, **opts):
         client.runs('revert -c %s' % use,
                     files=[f[0] for f in mod + add + rem], abort=False)
 
-    # get changelist data, and update it
-    changelist = client.runs('change -o %s' % use)
-    changelist['Description'] = desc
-
-    fn = None
-    try:
-        # write changelist data to a temporary file
-        fd, fn = tempfile.mkstemp(prefix='hg-p4-')
-        fp = os.fdopen(fd, 'wb')
-        marshal.dump(changelist, fp)
-        fp.close()
-
-        # update p4 changelist
-        d = client.runs('change -i <%s' % util.shellquote(fn))
-        data = d['data']
-        if d['code'] == 'info':
-            if not ui.verbose:
-                ui.status('p4: %s\n' % data)
-            if not use:
-                m = client.re_number.match(data)
-                if m:
-                    use = m.group(1)
-        else:
-            raise util.Abort(_('error creating p4 change: %s') % data)
-
-    finally:
-        try:
-            if fn: os.unlink(fn)
-        except:
-            pass
-
-    if not use:
-        raise util.Abort(_('did not get changelist number from p4'))
+    use = client.change(use, desc)
 
     # sort out the copies from the adds
     ntg = [(cpy[f[0]], f[0]) for f in add if f[0] in cpy]
