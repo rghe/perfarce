@@ -1039,8 +1039,8 @@ def push(original, ui, repo, dest=None, **opts):
 
 # --------------------------------------------------------------------------
 
-def submit(ui, repo, *changes, **opts):
-    'submit one or more changelists to the p4 depot.'
+def subrevcommon(mode, ui, repo, *changes, **opts):
+    'Collect list of changelist numbers from commandline'
 
     if repo.path.startswith('p4://'):
         dest = repo.path
@@ -1060,12 +1060,21 @@ def submit(ui, repo, *changes, **opts):
         changes = changes.keys()
         changes.sort()
 
-        if len(changes) == 0:
-            raise util.Abort(_('no pending changelists to submit'))
+        if not changes:
+            raise util.Abort(_('no pending changelists to %s') % mode)
     else:
         raise util.Abort(_('no changelists specified'))
 
+    return client, changes
+
+
+def submit(ui, repo, *changes, **opts):
+    'submit one or more changelists to the p4 depot.'
+
+    client, changes = subrevcommon('submit', ui, repo, *changes, **opts)
+
     for c in changes:
+        ui.status(_('submitting: %d\n') % c)
         desc, user, date, files = client.describe(c)
         nodes = client.parsenodes(desc)
         client.submit(nodes, c)
@@ -1074,28 +1083,10 @@ def submit(ui, repo, *changes, **opts):
 def revert(ui, repo, *changes, **opts):
     'revert one or more pending changelists and all opened files.'
 
-    if repo.path.startswith('p4://'):
-        dest = repo.path
-    else:
-        dest = ui.expandpath('default-push', 'default')
-    client = p4client(ui, repo, dest)
-
-    if changes:
-        changes = [int(c) for c in changes]
-    elif opts['all']:
-        changes = {}
-        pending = client.getpendingdict()
-        for i in pending:
-            i = pending[i]
-            if i != client.SUBMITTED:
-                changes[i] = True
-        changes = changes.keys()
-        if len(changes) == 0:
-            raise util.Abort(_('no pending changelists to revert'))
-    else:
-        raise util.Abort(_('no changelists specified'))
+    client, changes = subrevcommon('revert', ui, repo, *changes, **opts)
 
     for c in changes:
+        ui.status(_('reverting: %d\n') % c)
         try:
             desc, user, date, files = client.describe(c)
         except:
@@ -1178,11 +1169,11 @@ cmdtable = {
             'hg p4pending [p4://server/client]'),
     'p4revert':
         (   revert,
-            [ ('a', 'all', None,   _('revert all pending changelists')) ],
+            [ ('a', 'all', None,   _('revert all changelists listed by p4pending')) ],
             'hg p4revert [-a] changelist...'),
     'p4submit':
         (   submit,
-            [ ('a', 'all', None,   _('submit all pending changelists')) ],
+            [ ('a', 'all', None,   _('submit all changelists listed by p4pending')) ],
             'hg p4submit [-a] changelist...'),
     'p4identify':
         (   identify,
