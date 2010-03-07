@@ -144,6 +144,7 @@ class p4client(object):
             self.clientspec = {}
             self.usercache = {}
             self.p4stat = None
+            self.p4pending = None
 
             # helpers to parse p4 output
             self.re_type = re.compile('([a-z]+)?(text|binary|symlink|apple|resource|unicode|utf\d+)(\+\w+)?$')
@@ -282,23 +283,22 @@ class p4client(object):
         return count
 
 
-    SUBMITTED = -1
     def getpending(self, node):
-        '''return p4 submission state for node: SUBMITTED, a changelist
-        number if pending or None if not in a changelist'''
+        '''returns True if node is pending in p4 or has been submitted to p4'''
         if self.p4stat is None:
             self._readp4stat()
-        return self.p4stat.get(node, None)
+        return node.node() in self.p4stat
 
-    def getpendingdict(self):
+    def getpendinglist(self):
         'return p4 submission state dictionary'
         if self.p4stat is None:
             self._readp4stat()
-        return self.p4stat
+        return self.p4pending
 
     def _readp4stat(self):
         '''read pending and submitted changelists into pending cache'''
-        self.p4stat = {}
+        self.p4stat = set()
+        self.p4pending = []
 
         p4rev, p4id = self.latest()
 
@@ -307,12 +307,10 @@ class p4client(object):
             if c == p4id:
                 return
 
-            if d['status'] == 'submitted':
-                state = self.SUBMITTED
-            else:
-                state = c
-            for n in self.parsenodes(d['desc']):
-                self.p4stat[hex(n)] = state
+            entry = (c, d['status'] == 'submitted', self.parsenodes(d['desc']))
+            self.p4pending.append(entry)
+            for n in entry[2]:
+                self.p4stat.add(n)
 
         for d in self.run('changes -l -c %s ...@%d,#head' %
                            (util.shellquote(self.client), p4id)):
@@ -320,6 +318,7 @@ class p4client(object):
         for d in self.run('changes -l -c %s -s pending' %
                            (util.shellquote(self.client))):
             helper(self,d,p4id)
+        self.p4pending.sort()
 
 
     def getuser(self, user):
@@ -378,6 +377,9 @@ class p4client(object):
 
         if not change:
             raise util.Abort(_('did not get changelist number from p4'))
+        
+        # invalidate cache
+        self.p4stat = None
         
         return change
 
@@ -583,6 +585,9 @@ class p4client(object):
             # delete the files in the p4 client directory
             self.sync(0)
 
+        # invalidate cache
+        self.p4stat = None
+
 
     @staticmethod
     def pullcommon(original, ui, repo, source, **opts):
@@ -668,7 +673,7 @@ class p4client(object):
             for end in [0, -1]:
                 while nodes:
                     n = repo[nodes[end]]
-                    if client.getpending(n.hex()) is not None:
+                    if client.getpending(n):
                         del nodes[end]
                         trim = True
                     else:
@@ -683,7 +688,7 @@ class p4client(object):
             for n in nodes:
                 n = repo[n]
                 fail = False
-                if client.getpending(n.hex()) is not None:
+                if client.getpending(n):
                     fail = True
                 for ctx3 in n.children():
                     extra = ctx3.extra()
@@ -968,7 +973,11 @@ def push(original, ui, repo, dest=None, **opts):
         return r
     client, p4rev, p4id, nodes, ctx, desc, mod, add, rem, cpy = r
 
-    # sync to the last revision pulled/converted
+    # sync to the last revision pulled, converted or submitted
+    for e in client.getpendinglist():
+        if e[1]:
+            p4id=e[0]
+
     if client.keep:
         client.sync(p4id)
     else:
@@ -987,6 +996,7 @@ def push(original, ui, repo, dest=None, **opts):
         client.runs('revert -c %s' % use,
                     files=[f[0] for f in mod + add + rem], abort=False)
 
+    # create new changelist
     use = client.change(use, desc)
 
     # sort out the copies from the adds
@@ -1012,40 +1022,45 @@ def push(original, ui, repo, dest=None, **opts):
                         if "- use 'reopen'" in data:
                             raise util.Abort('p4: %s' % data)
 
-    # now add/edit/delete the files
-    if mod:
-        modal(_('opening for edit: %s\n'), 'edit -c %s' % use, mod)
+    try:
+        # now add/edit/delete the files
+        if mod:
+            modal(_('opening for edit: %s\n'), 'edit -c %s' % use, mod)
 
-    if mod or add:
-        ui.note(_('retrieving file contents...\n'))
-        opener = util.opener(client.root)
+        if mod or add:
+            ui.note(_('retrieving file contents...\n'))
+            opener = util.opener(client.root)
 
-        for name, mode in mod + add:
-            ui.debug(_('writing: %s\n') % name)
-            if 'l' in mode:
-                opener.symlink(ctx[name].data(), name)
-            else:
-                fp = opener(name, mode="w")
-                fp.write(ctx[name].data())
-                fp.close()
-            util.set_flags(os.path.join(client.root, name), 'l' in mode, 'x' in mode)
+            for name, mode in mod + add:
+                ui.debug(_('writing: %s\n') % name)
+                if 'l' in mode:
+                    opener.symlink(ctx[name].data(), name)
+                else:
+                    fp = opener(name, mode="w")
+                    fp.write(ctx[name].data())
+                    fp.close()
+                util.set_flags(os.path.join(client.root, name), 'l' in mode, 'x' in mode)
 
-    if add:
-        modal(_('opening for add: %s\n'), 'add -c %s' % use, add)
+        if add:
+            modal(_('opening for add: %s\n'), 'add -c %s' % use, add)
 
-    if ntg:
-        ui.note(_('opening for integrate: %s\n') % ' '.join(f[1] for f in ntg))
-        for f in ntg:
-            client.runs('integrate -c %s %s %s' % (use, f[0], f[1]))
+        if ntg:
+            ui.note(_('opening for integrate: %s\n') % ' '.join(f[1] for f in ntg))
+            for f in ntg:
+                client.runs('integrate -c %s %s %s' % (use, f[0], f[1]))
 
-    if rem:
-        modal(_('opening for delete: %s\n'), 'delete -c %s' % use, rem)
+        if rem:
+            modal(_('opening for delete: %s\n'), 'delete -c %s' % use, rem)
 
-    # submit the changelist to p4 if --submit was given
-    if opts['submit'] or ui.configbool('perfarce', 'submit', default=False):
-        client.submit(use)
-    else:
-        ui.note(_('pending changelist %s\n') % use)
+        # submit the changelist to p4 if --submit was given
+        if opts['submit'] or ui.configbool('perfarce', 'submit', default=False):
+            client.submit(use)
+        else:
+            ui.note(_('pending changelist %s\n') % use)
+
+    except:
+        revert(ui, repo, use, **opts)
+        raise
 
 
 # --------------------------------------------------------------------------
@@ -1062,15 +1077,7 @@ def subrevcommon(mode, ui, repo, *changes, **opts):
     if changes:
         changes = [int(c) for c in changes]
     elif opts['all']:
-        changes = {}
-        pending = client.getpendingdict()
-        for i in pending:
-            i = pending[i]
-            if i != client.SUBMITTED:
-                changes[i] = True
-        changes = changes.keys()
-        changes.sort()
-
+        changes = [e[0] for e in client.getpendinglist() if not e[1]]
         if not changes:
             raise util.Abort(_('no pending changelists to %s') % mode)
     else:
@@ -1116,29 +1123,18 @@ def pending(ui, repo, dest=None, **opts):
     dest = ui.expandpath(dest or 'default-push', dest or 'default')
     client = p4client(ui, repo, dest)
 
-    changes = {}
-    pending = client.getpendingdict()
-
-    for i in pending:
-        j = pending[i]
-        if i != client.SUBMITTED:
-            changes.setdefault(j, []).append(i)
-    keys = changes.keys()
-    keys.sort()
-
-    len = not ui.verbose and 12 or None
-    for i in keys:
-        if i == client.SUBMITTED:
-            state = 'submitted'
-        else:
-            state = str(i)
-        ui.write('%s %s\n' % (state, ' '.join(r[:len] for r in changes[i])))
+    hexfunc = ui.verbose and hex or short
+    pl = client.getpendinglist()
+    if pl:
+        w = max(len(str(e[0])) for e in pl)
+        for e in pl:
+            ui.write('%*d %s %s\n' % (-w, e[0], ['p','s'][e[1]], ' '.join(hexfunc(n) for n in e[2])))
 
 
 def identify(ui, repo, *args, **opts):
     '''show p4 and hg revisions for the most recent p4 changelist
 
-    With no revision, print a summary of the most recent revision
+    With no revision, show a summary of the most recent revision
     in the repository that was converted from p4.
     Otherwise, find the p4 changelist for the revision given.
     '''

@@ -274,6 +274,25 @@ hg mv b bb
 hg $HGDEBUG commit -m "hg move b"
 
 hg $HGDEBUG push -r tip  --submit
+hg $HGDEBUG pull --update
+
+echo % push repeatedly
+
+data >a
+hg $HGDEBUG commit -m "hg a once"
+hg $HGDEBUG push -r tip  --submit
+
+data >a
+hg $HGDEBUG commit -m "hg a twice"
+hg $HGDEBUG push -r tip  --submit
+
+data >cc
+hg $HGDEBUG commit -m "hg cc once"
+hg $HGDEBUG push -r tip  --submit
+
+data >a
+hg $HGDEBUG commit -m "hg a again"
+hg $HGDEBUG push -r tip  --submit
 
 SERVER=$(p4 info|sed -r -e '/Server version/!d' -e 's,[^/]+/[^.]+/([^/]+)/.+$,\1,' -e 's/\..$//')
 if [ $SERVER -ge 2009 ] ; then
@@ -324,5 +343,7 @@ cd dst2
 hg $HGDEBUG up
 
 check_contents
+
+cd ../dst
 
 # EOF
