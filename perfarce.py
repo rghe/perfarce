@@ -151,7 +151,7 @@ class p4client(object):
             self.re_keywords = re.compile(r'\$(Id|Header|Date|DateTime|Change|File|Revision|Author):[^$\n]*\$')
             self.re_keywords_old = re.compile('\$(Id|Header):[^$\n]*\$')
             self.re_hgid = re.compile('{{mercurial (([0-9a-f]{40})(:([0-9a-f]{40}))?)}}')
-            self.re_number = re.compile('.+ ([0-9]+) .+')
+            self.re_changeno = re.compile('Change ([0-9]+) created.+')
             self.actions = { 'edit':'M', 'add':'A', 'move/add':'A', 'delete':'R', 'move/delete':'R', 'purge':'R', 'branch':'A', 'integrate':'M' }
 
             try:
@@ -363,7 +363,7 @@ class p4client(object):
                 if not self.ui.verbose:
                     self.ui.status('p4: %s\n' % data)
                 if not change:
-                    m = self.re_number.match(data)
+                    m = self.re_changeno.match(data)
                     if m:
                         change = m.group(1)
             else:
