@@ -533,7 +533,12 @@ class p4client(object):
                 fn = os.sep.join([self.root, entry[4]])
                 fn = util.localpath(fn)
                 if mode == 'l':
-                    contents = os.readlink(fn)
+                    try:
+                        contents = os.readlink(fn)
+                    except AttributeError:
+                        contents = file(fn, 'rb').read()
+                        if contents.endswith('\n'):
+                            contents = contents[:-1]
                 else:
                     contents = file(fn, 'rb').read()
             else:
