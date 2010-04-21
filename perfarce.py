@@ -1116,8 +1116,9 @@ def revert(ui, repo, *changes, **opts):
 
         if files is not None:
             files = [f[0] for f in files]
-            ui.note(_('reverting: %s\n') % ' '.join(files))
-            client.runs('revert', files=files, abort=False)
+            if files:
+                ui.note(_('reverting: %s\n') % ' '.join(files))
+                client.runs('revert', files=files, abort=False)
             ui.note(_('deleting: %d\n') % c)
             client.runs('change -d %d' %c , abort=False)
 
