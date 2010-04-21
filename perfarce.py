@@ -266,8 +266,10 @@ class p4client(object):
                         elif code == 'info':
                             self.ui.note('p4: %s\n' % data)
                     yield d
-        finally:
+        except:
             os.chdir(old)
+            raise
+        os.chdir(old)
 
 
     def runs(self, cmd, one=True, **args):
