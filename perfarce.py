@@ -754,7 +754,10 @@ class p4client(object):
         try:
             mq = repo.changelog.nodesbetween([repo['qbase'].node()], nodes)[0]
             if mq:
-                raise util.Abort(_('source has mq patches applied'))
+                if opts['force']:
+                    ui.warn(_('source has mq patches applied\n'))
+                else:
+                    raise util.Abort(_('source has mq patches applied'))
         except error.RepoLookupError:
             pass
 
