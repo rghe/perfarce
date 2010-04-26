@@ -411,12 +411,23 @@ class p4client(object):
                 df = 'depotFile%d' % i
                 if df not in d:
                     break
-                df = d['depotFile%d' % i]
+                df = d[df]
                 rv = d['rev%d' % i]
                 tp = d['type%d' % i]
                 ac = d['action%d' % i]
                 files.append((df, int(rv), tp, self.actions[ac]))
                 i += 1
+
+        jobs = []
+        i = 0
+        while True:
+            jn = 'job%d' % i
+            if jn not in d:
+                break
+            jn = d[jn]
+            js = d['jobstat%d' % i]
+            jobs.append((jn, js))
+            i += 1
 
         # quasi-multiuser operation, extract user name from client
         cu = self.ui.config("perfarce","clientuser")
@@ -426,7 +437,7 @@ class p4client(object):
             if f:
                 user = string.capwords(u)
 
-        return desc, user, date, files
+        return desc, user, date, files, jobs
 
 
     def fstat(self, change, all=False):
@@ -774,7 +785,7 @@ def incoming(original, ui, repo, source='default', **opts):
 
     client, p4rev, p4id, startrev, changes = r
     for c in changes:
-        desc, user, date, files = client.describe(c, local=ui.verbose)
+        desc, user, date, files, jobs = client.describe(c, local=ui.verbose)
         tags = client.labels(c)
 
         ui.write(_('changelist:  %d\n') % c)
@@ -831,7 +842,7 @@ def pull(original, ui, repo, source=None, **opts):
 
     try:
         for c in changes:
-            desc, user, date, files = client.describe(c)
+            desc, user, date, files, jobs = client.describe(c)
             files = client.fstat(c, all=bool(startrev))
 
             if client.keep:
@@ -1100,7 +1111,7 @@ def submit(ui, repo, *changes, **opts):
 
     for c in changes:
         ui.status(_('submitting: %d\n') % c)
-        desc, user, date, files = client.describe(c)
+        desc, user, date, files, jobs = client.describe(c)
         client.submit(c)
 
 
@@ -1112,8 +1123,9 @@ def revert(ui, repo, *changes, **opts):
     for c in changes:
         ui.status(_('reverting: %d\n') % c)
         try:
-            desc, user, date, files = client.describe(c)
+            desc, user, date, files, jobs = client.describe(c)
         except:
+            if self.ui.traceback:self.ui.traceback()
             files = None
 
         if files is not None:
@@ -1121,6 +1133,12 @@ def revert(ui, repo, *changes, **opts):
             if files:
                 ui.note(_('reverting: %s\n') % ' '.join(files))
                 client.runs('revert', files=files, abort=False)
+
+            jobs = [j[0] for j in jobs]
+            if jobs:
+                ui.note(_('unfixing: %s\n') % ' '.join(jobs))
+                client.runs('fix -d -c %d' % c, files=jobs, abort=False)
+
             ui.note(_('deleting: %d\n') % c)
             client.runs('change -d %d' %c , abort=False)
 
