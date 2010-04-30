@@ -836,7 +836,7 @@ def pull(original, ui, repo, source=None, **opts):
             startrev = changes[0]
         else:
             if changes[0] != startrev:
-                raise util.Abort(_('changelist for --startrev not found'))
+                raise util.Abort(_('changelist for --startrev not found, first changelist is %s' % changes[0]))
 
     if client.lowercasepaths:
         ui.status(_("converting pathnames to lowercase.\n"))
