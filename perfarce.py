@@ -315,7 +315,8 @@ class p4client(object):
             if c == p4id:
                 return
 
-            entry = (c, d['status'] == 'submitted', self.parsenodes(d['desc']))
+            desc = d['desc']
+            entry = (c, d['status'] == 'submitted', self.parsenodes(desc), desc)
             self.p4pending.append(entry)
             for n in entry[2]:
                 self.p4stat.add(n)
@@ -1159,12 +1160,30 @@ def pending(ui, repo, dest=None, **opts):
     dest = ui.expandpath(dest or 'default-push', dest or 'default')
     client = p4client(ui, repo, dest)
 
+    dolong = opts.get('summary')
     hexfunc = ui.verbose and hex or short
     pl = client.getpendinglist()
     if pl:
         w = max(len(str(e[0])) for e in pl)
         for e in pl:
-            ui.write('%*d %s %s\n' % (-w, e[0], ['p','s'][e[1]], ' '.join(hexfunc(n) for n in e[2])))
+            if dolong:
+                ui.write(_('changelist:  %d\n') % e[0])
+                ui.write(_('status:      %s\n') % (['pending','submitted'][e[1]]))
+                for n in e[2]:
+                    ui.write(_('revision:    %s\n') % hexfunc(n))
+                if ui.verbose:
+                    ui.write(_('description:\n'))
+                    ui.write(e[3])
+                    ui.write('\n')
+                else:
+                    ui.write(_('summary:     %s\n') % e[3].splitlines()[0])
+                ui.write('\n')
+            else:
+                output = []
+                output.append('%*d' % (-w, e[0]))
+                output.append(['p','s'][e[1]])
+                output+=[hexfunc(n) for n in e[2]]
+                ui.write("%s\n" % ' '.join(output))
 
 
 def identify(ui, repo, *args, **opts):
@@ -1207,15 +1226,15 @@ cmdtable = {
     # 'command-name': (function-call, options-list, help-string)
     'p4pending':
         (   pending,
-            [ ],
-            'hg p4pending [p4://server/client]'),
+            [ ('s', 'summary', None, _('print p4 changelist summary')) ],
+            'hg p4pending [-s] [p4://server/client]'),
     'p4revert':
         (   revert,
-            [ ('a', 'all', None,   _('revert all changelists listed by p4pending')) ],
+            [ ('a', 'all', None, _('revert all changelists listed by p4pending')) ],
             'hg p4revert [-a] changelist...'),
     'p4submit':
         (   submit,
-            [ ('a', 'all', None,   _('submit all changelists listed by p4pending')) ],
+            [ ('a', 'all', None, _('submit all changelists listed by p4pending')) ],
             'hg p4submit [-a] changelist...'),
     'p4identify':
         (   identify,
