@@ -1133,8 +1133,9 @@ def revert(ui, repo, *changes, **opts):
         ui.status(_('reverting: %d\n') % c)
         try:
             desc, user, date, files, jobs = client.describe(c)
-        except:
-            if self.ui.traceback:self.ui.traceback()
+        except Exception,e:
+            if ui.traceback:ui.traceback()
+            ui.warn('%s\n' % e)
             files = None
 
         if files is not None:
