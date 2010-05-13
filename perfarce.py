@@ -163,12 +163,18 @@ class p4client(object):
                 else:
                     self.MAXARGS = 25
 
-            s, c = path[5:].split('/')
+            s, c = path[5:].split('/', 1)
             if ':' not in s:
                 s = '%s:1666' % s
             self.server = s
             if c:
-                d = self.runs('client -o %s' % util.shellquote(c))
+                d = self.runs('client -o %s' % util.shellquote(c), abort=False)
+                code = d.get('code')
+                if code == 'error':
+                    data=d['data'].strip()
+                    ui.warn('%s\n' % data)
+                    raise util.Abort(data)
+
                 for n in ['Root'] + ['AltRoots%d' % i for i in range(9)]:
                     if n in d and os.path.isdir(d[n]):
                         self.root = util.pconvert(d[n])
@@ -432,7 +438,7 @@ class p4client(object):
         # quasi-multiuser operation, extract user name from client
         cu = self.ui.config("perfarce","clientuser")
         if cu:
-            cus, cur = cu.split(" ",1)
+            cus, cur = cu.split(" ", 1)
             u, f = re.subn(cus, cur, d['client'])
             if f:
                 user = string.capwords(u)
