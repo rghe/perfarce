@@ -1013,9 +1013,13 @@ def push(original, ui, repo, dest=None, **opts):
         client.sync(p4id, force=True, files=[f[0] for f in mod])
 
     # attempt to reuse an existing changelist
+    def noid(d):
+        return client.re_hgid.sub("{{}}", d)
+        
     use = ''
+    noiddesc = noid(desc)
     for d in client.run('changes -s pending -c %s -l' % client.client):
-        if d['desc'] == desc:
+        if noid(d['desc']) == noiddesc:
             use = d['change']
 
     # revert any other changes to the files in existing changelist
