@@ -251,16 +251,16 @@ class p4client(object):
         return nodes
 
 
-    def run(self, cmd, files=[], abort=True):
+    def run(self, cmd, files=[], abort=True, client=None):
         'Run a P4 command and yield the objects returned'
 
         c = ['p4', '-G']
         if self.server:
             c.append('-p')
             c.append(self.server)
-        if self.client:
+        if client or self.client:
             c.append('-c')
-            c.append(self.client)
+            c.append(client or self.client)
         c.append(cmd)
 
         old = os.getcwd()
@@ -404,6 +404,12 @@ class p4client(object):
         return change
 
 
+    class description:
+        'Changelist description'
+        def __init__(self, **args):
+            self.__dict__.update(args)
+
+
     def describe(self, change, local=None):
         '''Return p4 changelist description, user name and date.
         If the local is true, then also collect a list of 5-tuples
@@ -416,14 +422,17 @@ class p4client(object):
 
         self.ui.note(_('change %d\n') % change)
         d = self.runs('describe -s %d' % change)
-        desc = d['desc']
-        user = self.getuser(d['user'])
-        date = (int(d['time']), 0)     # p4 uses UNIX epoch
+        r = self.description(change=d['change'],
+                             desc = d['desc'],
+                             user = self.getuser(d['user']),
+                             date = (int(d['time']), 0),     # p4 uses UNIX epoch
+                             status = d['status'],
+                             client = d['client'])
 
         if local:
-            files = self.fstat(change)
+            r.files = self.fstat(change)
         else:
-            files = []
+            r.files = []
             i = 0
             while True:
                 df = 'depotFile%d' % i
@@ -433,10 +442,10 @@ class p4client(object):
                 rv = d['rev%d' % i]
                 tp = d['type%d' % i]
                 ac = d['action%d' % i]
-                files.append((df, int(rv), tp, self.actions[ac]))
+                r.files.append((df, int(rv), tp, self.actions[ac]))
                 i += 1
 
-        jobs = []
+        r.jobs = []
         i = 0
         while True:
             jn = 'job%d' % i
@@ -444,7 +453,7 @@ class p4client(object):
                 break
             jn = d[jn]
             js = d['jobstat%d' % i]
-            jobs.append((jn, js))
+            r.jobs.append((jn, js))
             i += 1
 
         # quasi-multiuser operation, extract user name from client
@@ -453,9 +462,9 @@ class p4client(object):
             cus, cur = cu.split(" ", 1)
             u, f = re.subn(cus, cur, d['client'])
             if f:
-                user = string.capwords(u)
+                r.user = string.capwords(u)
 
-        return desc, user, date, files, jobs
+        return r
 
 
     def fstat(self, change, all=False):
@@ -806,7 +815,7 @@ def incoming(original, ui, repo, source='default', **opts):
 
     client, p4rev, p4id, startrev, changes = r
     for c in changes:
-        desc, user, date, files, jobs = client.describe(c, local=ui.verbose)
+        cl = client.describe(c, local=ui.verbose)
         tags = client.labels(c)
 
         ui.write(_('changelist:  %d\n') % c)
@@ -814,18 +823,18 @@ def incoming(original, ui, repo, source='default', **opts):
         for tag in tags:
             ui.write(_('tag:         %s\n') % tag)
         # ui.write(_('parent:      %d:%s\n') % parent)
-        ui.write(_('user:        %s\n') % user)
-        ui.write(_('date:        %s\n') % util.datestr(date))
+        ui.write(_('user:        %s\n') % cl.user)
+        ui.write(_('date:        %s\n') % util.datestr(cl.date))
         if ui.verbose:
-            ui.write(_('files:       %s\n') % ' '.join(f[4] for f in files))
+            ui.write(_('files:       %s\n') % ' '.join(f[4] for f in cl.files))
 
-        if desc:
+        if cl.desc:
             if ui.verbose:
                 ui.write(_('description:\n'))
-                ui.write(desc)
+                ui.write(cl.desc)
                 ui.write('\n')
             else:
-                ui.write(_('summary:     %s\n') % desc.splitlines()[0])
+                ui.write(_('summary:     %s\n') % cl.desc.splitlines()[0])
 
         ui.write('\n')
 
@@ -866,7 +875,7 @@ def pull(original, ui, repo, source=None, **opts):
 
     try:
         for c in changes:
-            desc, user, date, files, jobs = client.describe(c)
+            cl = client.describe(c)
             files = client.fstat(c, all=bool(startrev))
 
             if client.keep:
@@ -879,7 +888,7 @@ def pull(original, ui, repo, source=None, **opts):
 
             entries = dict((f[4], f) for f in files)
 
-            nodes = client.parsenodes(desc)
+            nodes = client.parsenodes(cl.desc)
             if nodes:
                 parent = nodes[-1]
                 hgfiles = [f for f in repo[parent].files() if f.startswith('.hg')]
@@ -895,9 +904,9 @@ def pull(original, ui, repo, source=None, **opts):
             else:
                 extra = {'p4':c}
 
-            ctx = context.memctx(repo, (p4rev, parent), desc,
+            ctx = context.memctx(repo, (p4rev, parent), cl.desc,
                                  [f[4] for f in files] + hgfiles,
-                                 getfilectx, user, date, extra)
+                                 getfilectx, cl.user, cl.date, extra)
 
             p4rev = repo.commitctx(ctx)
             ctx = repo[p4rev]
@@ -1141,7 +1150,7 @@ def submit(ui, repo, *changes, **opts):
 
     for c in changes:
         ui.status(_('submitting: %d\n') % c)
-        desc, user, date, files, jobs = client.describe(c)
+        cl = client.describe(c)
         client.submit(c)
 
 
@@ -1153,25 +1162,25 @@ def revert(ui, repo, *changes, **opts):
     for c in changes:
         ui.status(_('reverting: %d\n') % c)
         try:
-            desc, user, date, files, jobs = client.describe(c)
+            cl = client.describe(c)
         except Exception,e:
             if ui.traceback:ui.traceback()
             ui.warn('%s\n' % e)
-            files = None
+            cl = None
 
-        if files is not None:
-            files = [f[0] for f in files]
+        if cl is not None:
+            files = [f[0] for f in cl.files]
             if files:
                 ui.note(_('reverting: %s\n') % ' '.join(files))
-                client.runs('revert', files=files, abort=False)
+                client.runs('revert', client=cl.client, files=files, abort=False)
 
-            jobs = [j[0] for j in jobs]
+            jobs = [j[0] for j in cl.jobs]
             if jobs:
                 ui.note(_('unfixing: %s\n') % ' '.join(jobs))
-                client.runs('fix -d -c %d' % c, files=jobs, abort=False)
+                client.runs('fix -d -c %d' % c, client=cl.client, files=jobs, abort=False)
 
             ui.note(_('deleting: %d\n') % c)
-            client.runs('change -d %d' %c , abort=False)
+            client.runs('change -d %d' %c , client=cl.client, abort=False)
 
 
 def pending(ui, repo, dest=None, **opts):
