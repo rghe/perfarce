@@ -106,7 +106,7 @@ class p4repo(repo.repository):
 
     def local(self):
         return True
-    
+
     def __getattr__(self, a):
         raise util.Abort(_('not supported for p4'))
 
@@ -192,18 +192,29 @@ class p4client(object):
 
     def latest(self, tags=False):
         '''Find the most recent changelist which has the p4 extra data which
-        gives the p4 changelist it was converted from'''
-        for rev in xrange(len(self.repo)-1, -1, -1):
-            ctx = self.repo[rev]
+        gives the p4 changelist it was converted from.
+        Returns the revision and p4 changelist number'''
+
+        def dothgonly(ctx):
+            'returns True if only .hg files in this context'
+            for f in ctx.files():
+                if not f.startswith('.hg'):
+                    return False
+            return True
+
+        lasthg = None
+        ctx = self.repo['default']
+        while ctx.node() != node.nullid:
             extra = ctx.extra()
             if 'p4' in extra:
-                if tags:
-                    # if there is a child with p4 tags then return the child revision
-                    for ctx2 in ctx.children():
-                        if ctx2.description().startswith('p4 tags\n') and ".hgtags" in ctx2:
-                            ctx = ctx2
-                            break
-                return ctx.node(), int(extra['p4'])
+                return (tags and lasthg or ctx).node(), int(extra['p4'])
+            elif dothgonly(ctx):
+                if lasthg is None:
+                    lasthg = ctx
+            else:
+                lasthg = None
+            ctx = ctx.parents()[0]
+
         raise util.Abort(_('no p4 changelist revision found'))
 
 
@@ -348,12 +359,12 @@ class p4client(object):
 
 
     def change(self, change=None, description=None):
-        '''Create a new p4 changelist or update an existing changelist with 
+        '''Create a new p4 changelist or update an existing changelist with
         the given description. Returns the changelist number as a string.'''
 
         # get changelist data, and update it
         changelist = self.runs('change -o %s' % (change or ''))
-        
+
         if description is not None:
             changelist['Description'] = description
 
@@ -386,10 +397,10 @@ class p4client(object):
 
         if not change:
             raise util.Abort(_('did not get changelist number from p4'))
-        
+
         # invalidate cache
         self.p4stat = None
-        
+
         return change
 
 
@@ -595,7 +606,7 @@ class p4client(object):
 
 
     def submit(self, change):
-        '''submit one changelist to p4 and optionally delete the files added 
+        '''submit one changelist to p4 and optionally delete the files added
         or modified in the p4 workarea'''
 
         cl = None
@@ -832,6 +843,9 @@ def pull(original, ui, repo, source=None, **opts):
 
     def getfilectx(repo, memctx, fn):
         'callback to read file data'
+        if fn.startswith('.hg'):
+            return repo[parent].filectx(fn)
+
         mode, contents = client.getfile(entries[fn])
         return context.memfilectx(fn, contents, 'l' in mode, 'x' in mode, None)
 
@@ -868,8 +882,10 @@ def pull(original, ui, repo, source=None, **opts):
             nodes = client.parsenodes(desc)
             if nodes:
                 parent = nodes[-1]
+                hgfiles = [f for f in repo[parent].files() if f.startswith('.hg')]
             else:
                 parent = None
+                hgfiles = []
 
             if startrev:
                 # no 'p4' data on first revision as it does not correspond
@@ -880,8 +896,8 @@ def pull(original, ui, repo, source=None, **opts):
                 extra = {'p4':c}
 
             ctx = context.memctx(repo, (p4rev, parent), desc,
-                                 [f[4] for f in files], getfilectx,
-                                 user, date, extra)
+                                 [f[4] for f in files] + hgfiles,
+                                 getfilectx, user, date, extra)
 
             p4rev = repo.commitctx(ctx)
             ctx = repo[p4rev]
