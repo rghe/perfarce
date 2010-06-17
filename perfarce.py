@@ -190,7 +190,7 @@ class p4client(object):
             raise util.Abort(_('not a p4 repository'))
 
 
-    def latest(self, tags=False):
+    def latest(self, base=False):
         '''Find the most recent changelist which has the p4 extra data which
         gives the p4 changelist it was converted from.
         Returns the revision and p4 changelist number'''
@@ -212,7 +212,7 @@ class p4client(object):
         while ctx.node() != node.nullid:
             extra = ctx.extra()
             if 'p4' in extra:
-                return (tags and lasthg or ctx).node(), int(extra['p4'])
+                return (base and lasthg or ctx).node(), int(extra['p4'])
             elif dothgonly(ctx):
                 if mqnode and self.repo.changelog.nodesbetween(mqnode, [ctx.node()])[0]:
                     lasthg = None
@@ -661,7 +661,7 @@ class p4client(object):
         startrev = startrev and int(startrev) or 0
 
         if len(repo):
-            p4rev, p4id = client.latest(tags=True)
+            p4rev, p4id = client.latest(base=True)
         else:
             p4rev = None
             if startrev > 0:
@@ -701,7 +701,7 @@ class p4client(object):
             if ui.traceback:ui.traceback()
             return True, original(ui, repo, dest, **opts)
 
-        p4rev, p4id = client.latest(tags=True)
+        p4rev, p4id = client.latest(base=True)
         ctx1 = repo[p4rev]
         rev = opts.get('rev')
 
@@ -1239,7 +1239,7 @@ def identify(ui, repo, *args, **opts):
         changelist = int(extra['p4'])
     else:
         client = p4client(ui, repo, 'p4:///')
-        p4rev, changelist = client.latest()
+        p4rev, changelist = client.latest(base=opts.get('base'))
         ctx = repo[p4rev]
 
     num = opts.get('num')
@@ -1274,11 +1274,12 @@ cmdtable = {
             'hg p4submit [-a] changelist...'),
     'p4identify':
         (   identify,
-            [ ('r', 'rev', '',   _('identify the specified revision')),
-              ('n', 'num', None, _('show local revision number')),
-              ('i', 'id',  None, _('show global revision id')),
-              ('p', 'p4',  None, _('show p4 revision number')),
+            [ ('b', 'base', None, _('show base revision for new incoming changes')),
+              ('i', 'id',   None, _('show global revision id')),
+              ('n', 'num',  None, _('show local revision number')),
+              ('p', 'p4',   None, _('show p4 revision number')),
+              ('r', 'rev',  '',   _('identify the specified revision')),
             ],
-            'hg p4identify [-inp] [-r REV]'
+            'hg p4identify [-binp] [-r REV]'
         )
 }
