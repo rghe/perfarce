@@ -202,6 +202,11 @@ class p4client(object):
                     return False
             return True
 
+        try:
+            mqnode = [self.repo['qbase'].node()]
+        except:
+            mqnode = None
+
         lasthg = None
         ctx = self.repo['default']
         while ctx.node() != node.nullid:
@@ -209,7 +214,9 @@ class p4client(object):
             if 'p4' in extra:
                 return (tags and lasthg or ctx).node(), int(extra['p4'])
             elif dothgonly(ctx):
-                if lasthg is None:
+                if mqnode and self.repo.changelog.nodesbetween(mqnode, [ctx.node()])[0]:
+                    lasthg = None
+                elif lasthg is None:
                     lasthg = ctx
             else:
                 lasthg = None
