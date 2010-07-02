@@ -8,11 +8,16 @@ DOSHELL=0
 P4PWD=`pwd`
 P4ROOT=$P4PWD/depot
 KEEP=true
+ENCODING=
+UNICODE=0
 
-while getopts "k:dr:s" OPT ; do
+while getopts "de:k:r:su" OPT ; do
    case "$OPT" in
       d)
          DEBUG=1
+         ;;
+      e)
+         ENCODING=$OPTARG
          ;;
       k)
          KEEP=$OPTARG
@@ -22,6 +27,9 @@ while getopts "k:dr:s" OPT ; do
          ;;
       s)
          DOSHELL=1
+         ;;
+      u)
+         UNICODE=1
          ;;
       \?)
          HELP=1
@@ -37,11 +45,14 @@ if [ $HELP -ne 0 ] ; then
    exit 1
 fi
 
+# ..........................................................................
+
+# test we have p4 available
 if [ -n "$TESTDIR" ] ; then
    "$TESTDIR/hghave" p4 || exit 80
 fi
 
-# setup
+# set up p4 environment
 export P4ROOT
 P4AUDIT=$P4ROOT/audit; export P4AUDIT
 P4JOURNAL=$P4ROOT/journal; export P4JOURNAL
@@ -59,6 +70,11 @@ unset P4DIFF
 unset P4EDITOR
 unset P4PASSWD
 unset P4USER
+
+# set up Mercurial environment
+if [ -n "$ENCODING" ] ; then
+   export HGENCODING=utf-8
+fi
 
 if [ -z "$HGRCPATH" ] ; then
    HGRCPATH=$P4PWD/.hgrc ; export HGRCPATH
@@ -83,7 +99,7 @@ EOF
 echo % create p4 depot
 
 if [ $DEBUG -ne 0 ] ; then
-    HGDEBUG=--debug
+    HGDEBUG="--debug --traceback"
     filter() { 
         cat
     }
@@ -109,23 +125,46 @@ rm -fr $P4ROOT $P4PWD/src $P4PWD/dst $P4PWD/dst2 $P4PWD/new || true
 
 echo % start the p4 server
 [ ! -d $P4ROOT ] && mkdir $P4ROOT
+
+# start server
 p4d -f -J off >$P4ROOT/stdout 2>$P4ROOT/stderr &
+# wait for the server to initialize
+while ! p4 ; do
+   sleep 1
+done >/dev/null 2>/dev/null
+
+if [ $UNICODE -ne 0 ] ; then
+    # stop it
+    p4 admin stop
+    sleep 1
+
+    # convert database
+    p4d -xi
+    sleep 1
+
+    # restart server
+    p4d -f -J off >$P4ROOT/stdout 2>$P4ROOT/stderr &
+
+    P4CHARSET=$ENCODING
+    export P4CHARSET
+
+    # wait for the server to initialize
+    while ! p4 ; do
+       sleep 1
+    done >/dev/null 2>/dev/null
+fi
 
 export DOSHELL
 cleanup() {
     if [ $DOSHELL -ne 0 ] ; then
         echo % run bash
+        env | grep '^P4'
         bash
     fi
     echo % stop the p4 server
     p4 admin stop
 }
 trap cleanup EXIT
-
-# wait for the server to initialize
-while ! p4 ; do
-   sleep 1
-done >/dev/null 2>/dev/null
 
 echo % create a client spec
 mkdir src
@@ -339,9 +378,36 @@ if [ $SERVER -ge 2005 ] ; then
     check_contents
 fi
 
+if [ -n "$ENCODING" ] ; then
+    echo % encoding
+    
+    cd ../src
+    p4 sync | filter
+
+    data >k
+    p4 add k
+    p4 submit -d "add k special $(/bin/echo -e "\300\301\302\303\304\305\306\307") chars"
+
+    cd ../dst
+
+    if [ $UNICODE -eq 0 ] ; then
+        echo "[perfarce]" >>.hg/hgrc
+        echo "encoding=$ENCODING" >>.hg/hgrc
+    fi
+
+    hg $HGDEBUG pull --update
+
+    data >k
+    hg $HGDEBUG commit -m "hg change k special $(/bin/echo -e "\303\260\303\261\303\262\303\263\303\264\303\265\303\266\303\267") chars"
+    hg $HGDEBUG push --submit
+
+    check_contents
+fi
+
 echo % clone
 cd ..
-hg clone p4://$P4PORT/$P4CLIENT dst2
+
+hg clone ${ENCODING:+--encoding $ENCODING} p4://$P4PORT/$P4CLIENT dst2
 
 cd dst2
 hg $HGDEBUG up

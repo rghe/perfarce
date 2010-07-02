@@ -73,7 +73,7 @@ Five built-in commands are overridden:
            (e.g. path/foo and PAth/bar).
 '''
 
-from mercurial import cmdutil, commands, context, copies, error, extensions, hg, node, repo, util
+from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, repo, util
 from mercurial.node import hex, short
 from mercurial.i18n import _
 
@@ -89,6 +89,7 @@ def uisetup(ui):
     extensions.wrapcommand(commands.table, 'outgoing', outgoing)
     p = extensions.wrapcommand(commands.table, 'clone', clone)
     p[1].append(('', 'startrev', '', 'for p4:// source set initial revisions for clone'))
+    p[1].append(('', 'encoding', '', 'for p4:// source set encoding used by server'))
     hg.schemes['p4'] = p4repo
 
 # --------------------------------------------------------------------------
@@ -139,6 +140,17 @@ class p4client(object):
             self.keep = ui.configbool('perfarce', 'keep', True)
             self.lowercasepaths = ui.configbool('perfarce', 'lowercasepaths', False)
             self.tags = ui.configbool('perfarce', 'tags', True)
+
+            # work out character set for p4 text (but not filenames)
+            emap = { 'none': 'ascii', 
+                     'utf8-bom': 'utf_8_sig', 
+                     'macosroman': 'mac-roman', 
+                     'winansi': 'cp1252' }
+            e = os.environ.get("P4CHARSET")
+            if e:
+                self.encoding = emap.get(e,e)
+            else:
+                self.encoding = ui.config('perfarce', 'encoding', None)
 
             # caches
             self.clientspec = {}
@@ -242,6 +254,27 @@ class p4client(object):
             elif 'k' in flags:
                 keywords = self.re_keywords
         return mode, keywords
+
+
+    def decode(self, text):
+        'decode text in p4 character set as utf-8'
+
+        if self.encoding:
+            try:
+                return text.decode(self.encoding).encode(encoding.encoding)
+            except LookupError, e:
+                raise error.Abort("%s, please check your locale settings" % e)
+        return text
+
+    def encode(self, text):
+        'encode utf-8 text to p4 character set'
+
+        if self.encoding:
+            try:
+                return text.decode(encoding.encoding).encode(self.encoding)
+            except LookupError, e:
+                raise error.Abort("%s, please check your locale settings" % e)
+        return text
 
 
     def parsenodes(self, desc):
@@ -373,7 +406,7 @@ class p4client(object):
         changelist = self.runs('change -o %s' % (change or ''))
 
         if description is not None:
-            changelist['Description'] = description
+            changelist['Description'] = self.encode(description)
 
         fn = None
         try:
@@ -430,11 +463,11 @@ class p4client(object):
         self.ui.note(_('change %d\n') % change)
         d = self.runs('describe -s %d' % change)
         r = self.description(change=d['change'],
-                             desc = d['desc'],
-                             user = self.getuser(d['user']),
-                             date = (int(d['time']), 0),     # p4 uses UNIX epoch
-                             status = d['status'],
-                             client = d['client'])
+                             desc=self.decode(d['desc']),
+                             user=self.getuser(self.decode(d['user'])),
+                             date=(int(d['time']), 0),     # p4 uses UNIX epoch
+                             status=d['status'],
+                             client=d['client'])
 
         if local:
             r.files = self.fstat(change)
@@ -659,6 +692,10 @@ class p4client(object):
         # for clone we support a --startrev option to fold initial changelists
         startrev = opts.get('startrev')
         startrev = startrev and int(startrev) or 0
+
+        # for clone we support an --encoding option to set server character set
+        if opts.get('encoding'):
+            client.encoding = opts.get('encoding')
 
         if len(repo):
             p4rev, p4id = client.latest(base=True)
@@ -994,6 +1031,8 @@ def clone(original, ui, source, dest=None, **opts):
         fp.write("keep = %s\n" % client.keep)
         fp.write("lowercasepaths = %s\n" % client.lowercasepaths)
         fp.write("tags = %s\n" % client.tags)
+        if client.encoding:
+            fp.write("encoding = %s\n" % client.encoding)
         cu = ui.config("perfarce", "clientuser")
         if cu:
             fp.write("clientuser = %s\n" % cu)
