@@ -203,6 +203,8 @@ p4 submit -d "p4 delete b/c"
 
 cd ..
 
+hg version
+
 echo % convert
 
 hg $HGDEBUG convert -s p4 $DEPOTPATH/... dst
