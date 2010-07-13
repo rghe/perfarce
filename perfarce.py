@@ -209,6 +209,11 @@ class p4client(object):
 
         def dothgonly(ctx):
             'returns True if only .hg files in this context'
+
+            if not ctx.files():
+                # no files means this must have been a merge
+                return False
+
             for f in ctx.files():
                 if not f.startswith('.hg'):
                     return False
