@@ -456,17 +456,17 @@ class p4client(object):
 
 
     def describe(self, change, local=None):
-        '''Return p4 changelist description, user name and date.
+        '''Return p4 changelist description object with user name and date.
         If the local is true, then also collect a list of 5-tuples
             (depotname, revision, type, action, localname)
         This does not work on pending changelists.
-        If local is false then the list returned holds 4-tuples
+        If local is false then the files list returned holds 4-tuples
             (depotname, revision, type, action)
         Retrieving the local filenames is potentially very slow.
         '''
 
-        self.ui.note(_('change %d\n') % change)
-        d = self.runs('describe -s %d' % change)
+        self.ui.note(_('change %s\n') % change)
+        d = self.runs('describe -s %s' % change)
         r = self.description(change=d['change'],
                              desc=self.decode(d['desc']),
                              user=self.getuser(self.decode(d['user'])),
@@ -777,6 +777,10 @@ class p4client(object):
             if trim and nodes:
                 ctx1 = repo[nodes[0]].parents()[0]
                 ctx2 = repo[nodes[-1]]
+
+            if ui.debugflag:
+                for n in nodes:
+                    ui.debug('outgoing %s\n' % hex(n))
 
             # check that remaining nodes have not already been pushed
             for n in nodes:
@@ -1098,11 +1102,18 @@ def push(original, ui, repo, dest=None, **opts):
         if noid(d['desc']) == noiddesc:
             use = d['change']
 
-    # revert any other changes to the files in existing changelist
+    def rev(files, abort=True):
+        files = [f[0] for f in files]
+        ui.note(_('reverting: %s\n') % ' '.join(files))
+        client.runs('revert -c %s' % use, files=files, abort=abort)
+
+    # revert any other changes in existing changelist
     if use:
-        ui.note(_('reverting: %s\n') % ' '.join(f[0] for f in mod + add + rem))
-        client.runs('revert -c %s' % use,
-                    files=[f[0] for f in mod + add + rem], abort=False)
+        cl = client.describe(use)
+        rev(cl.files)
+
+    # revert any other changes to the files
+    rev(mod + add + rem, abort=False)
 
     # create new changelist
     use = client.change(use, desc)
