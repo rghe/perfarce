@@ -142,9 +142,9 @@ class p4client(object):
             self.tags = ui.configbool('perfarce', 'tags', True)
 
             # work out character set for p4 text (but not filenames)
-            emap = { 'none': 'ascii', 
-                     'utf8-bom': 'utf_8_sig', 
-                     'macosroman': 'mac-roman', 
+            emap = { 'none': 'ascii',
+                     'utf8-bom': 'utf_8_sig',
+                     'macosroman': 'mac-roman',
                      'winansi': 'cp1252' }
             e = os.environ.get("P4CHARSET")
             if e:
@@ -203,8 +203,10 @@ class p4client(object):
 
 
     def latest(self, base=False):
-        '''Find the most recent changelist which has the p4 extra data which
-        gives the p4 changelist it was converted from.
+        '''Find the most recent revision which has the p4 extra data which
+        gives the p4 changelist it was converted from. If base is True then
+        return the most recent child of that revision where the only changes
+        between it and the p4 changelist are to .hg files.
         Returns the revision and p4 changelist number'''
 
         def dothgonly(ctx):
@@ -224,20 +226,30 @@ class p4client(object):
         except:
             mqnode = None
 
-        lasthg = None
-        ctx = self.repo['default']
-        while ctx.node() != node.nullid:
-            extra = ctx.extra()
-            if 'p4' in extra:
-                return (base and lasthg or ctx).node(), int(extra['p4'])
-            elif dothgonly(ctx):
-                if mqnode and self.repo.changelog.nodesbetween(mqnode, [ctx.node()])[0]:
-                    lasthg = None
-                elif lasthg is None:
-                    lasthg = ctx
-            else:
-                lasthg = None
-            ctx = ctx.parents()[0]
+        seen = set()
+        current = [(self.repo['default'],())]
+        while current:
+            next = []
+            self.ui.debug("latest: %s\n" % (" ".join(hex(c[0].node()) for c in current)))
+            for ctx,path in current:
+                extra = ctx.extra()
+                if 'p4' in extra:
+                    if base:
+                        while path:
+                            if dothgonly(path[0]) and not (mqnode and 
+                                   self.repo.changelog.nodesbetween(mqnode, [ctx.node()])[0]):
+                                ctx = path[0]
+                                path = path[1:]
+                            else:
+                                path = []
+                    return ctx.node(), int(extra['p4'])
+
+                for p in ctx.parents():
+                    if p and p not in seen:
+                        seen.add(p)
+                        next.append((p, (ctx,) + path))
+
+            current = next
 
         raise util.Abort(_('no p4 changelist revision found'))
 
@@ -1095,7 +1107,7 @@ def push(original, ui, repo, dest=None, **opts):
     # attempt to reuse an existing changelist
     def noid(d):
         return client.re_hgid.sub("{{}}", d)
-        
+
     use = ''
     noiddesc = noid(desc)
     for d in client.run('changes -s pending -c %s -l' % client.client):
