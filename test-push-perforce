@@ -416,6 +416,84 @@ hg $HGDEBUG up
 
 check_contents
 
+cd ../src
+
+echo % merge/pull test
+
+data >f1
+p4 add f1
+p4 submit -d "add f1 - repo"
+
+p4 edit f1
+data >f1
+data >f2
+p4 add f2
+p4 submit -d "add f2, mod f1 - repo"
+
+p4 edit f2
+data >f2
+data >f3
+p4 add f3
+p4 submit -d "add f3, mod f2 - repo"
+
 cd ../dst
+
+hg $HGDEBUG pull
+hg $HGDEBUG up
+
+data >f2
+data >f4
+hg add f4
+hg ci -m "add f4, mod f2 - clone"
+
+data >f1
+data >f5
+hg add f5
+hg ci -m "add f5, mod f1 - clone"
+
+data >f3
+data >f6
+hg add f6
+hg ci -m "add f6, mod f3 - clone"
+
+cd ../src
+
+p4 edit f1
+p4 edit f2
+data >f1
+data >f2
+data >f7
+p4 add f7
+p4 submit -d "add f7, mod f1, mod f2 - repo"
+
+p4 edit f1
+p4 edit f2
+data >f1
+data >f2
+p4 submit -d "mod f1, mod f2 - repo"
+
+p4 edit f2
+data >f2
+p4 delete f1
+p4 submit -d "mod f2, del f1 - repo"
+
+p4 edit f3
+data >f3
+p4 submit -d "mod f3 - repo"
+
+cd ../dst
+
+echo % pull before merge
+hg $HGDEBUG pull
+
+set -x
+
+echo % merge
+echo d | hg merge --config ui.merge=internal:other
+hg ci -m "merge"
+
+hg $HGDEBUG push
+
+
 
 # EOF
