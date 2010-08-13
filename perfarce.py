@@ -1115,9 +1115,10 @@ def push(original, ui, repo, dest=None, **opts):
             use = d['change']
 
     def rev(files, abort=True):
-        files = [f[0] for f in files]
-        ui.note(_('reverting: %s\n') % ' '.join(files))
-        client.runs('revert -c %s' % use, files=files, abort=abort)
+        if files:
+            files = [f[0] for f in files]
+            ui.note(_('reverting: %s\n') % ' '.join(files))
+            client.runs('revert -c %s' % use, files=files, abort=abort)
 
     # revert any other changes in existing changelist
     if use:
