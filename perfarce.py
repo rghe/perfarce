@@ -823,7 +823,7 @@ class p4client(object):
             # forget about copies with changes to the data
             forget = []
             for c in cpy:
-                if ctx2.flags(c) != ctx1.flags(c) or ctx1[cpy[c]].cmp(ctx2[c].data()):
+                if ctx2.flags(c) != ctx1.flags(c) or ctx2[c].data() != ctx1[cpy[c]].data():
                     forget.append(c)
             for c in forget:
                 del cpy[c]
