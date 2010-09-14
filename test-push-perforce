@@ -220,10 +220,14 @@ check_contents() {
 check_contents
 
 echo % nothing incoming
-hg $HGDEBUG incoming
+if hg $HGDEBUG incoming ; then
+   false
+fi
 
 echo % nothing outgoing
-hg $HGDEBUG outgoing
+if hg $HGDEBUG outgoing ; then
+   false
+fi
 
 echo % change some files in hg
 data >> a

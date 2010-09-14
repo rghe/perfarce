@@ -840,7 +840,7 @@ class p4client(object):
 
         if not (mod or add or rem):
             ui.status(_('no changes found\n'))
-            return True, 0
+            return True, out and 1 or 0
 
         # detect MQ
         try:
@@ -872,7 +872,9 @@ class p4client(object):
 # --------------------------------------------------------------------------
 
 def incoming(original, ui, repo, source='default', **opts):
-    '''show changes that would be pulled from the p4 source repository'''
+    '''show changes that would be pulled from the p4 source repository
+    Returns 0 if there are incoming changes, 1 otherwise.
+    '''
 
     done, r = p4client.pullcommon(original, ui, repo, source, **opts)
     if done:
@@ -902,6 +904,7 @@ def incoming(original, ui, repo, source='default', **opts):
                 ui.write(_('summary:     %s\n') % cl.desc.splitlines()[0])
 
         ui.write('\n')
+    return not changes and 1 or 0
 
 
 def pull(original, ui, repo, source=None, **opts):
@@ -1065,7 +1068,9 @@ def clone(original, ui, source, dest=None, **opts):
 # --------------------------------------------------------------------------
 
 def outgoing(original, ui, repo, dest=None, **opts):
-    '''Wrap the outgoing command to look for p4 paths, report changes'''
+    '''Wrap the outgoing command to look for p4 paths, report changes
+    Returns 0 if there are outgoing changes, 1 otherwise.
+    '''
     done, r = p4client.pushcommon(True, original, ui, repo, dest, **opts)
     if done:
         return r
