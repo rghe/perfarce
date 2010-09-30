@@ -384,9 +384,10 @@ class p4client(object):
                 return
 
             desc = d['desc']
-            entry = (c, d['status'] == 'submitted', self.parsenodes(desc), desc)
+            nodes = self.parsenodes(desc)
+            entry = (c, d['status'] == 'submitted', nodes, desc, d['client'])
             self.p4pending.append(entry)
-            for n in entry[2]:
+            for n in nodes:
                 self.p4stat.add(n)
 
         for d in self.run('changes -l -c %s ...@%d,#head' %
@@ -1277,6 +1278,8 @@ def pending(ui, repo, dest=None, **opts):
         for e in pl:
             if dolong:
                 ui.write(_('changelist:  %d\n') % e[0])
+                if ui.verbose:
+                    ui.write(_('client:      %s\n') % e[4])
                 ui.write(_('status:      %s\n') % (['pending','submitted'][e[1]]))
                 for n in e[2]:
                     ui.write(_('revision:    %s\n') % hexfunc(n))
