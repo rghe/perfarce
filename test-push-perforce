@@ -189,6 +189,10 @@ p4 edit a
 data >> a
 p4 submit -d "p4 change a"
 
+data >> '$dollar.txt'
+p4 add '$dollar.txt'
+p4 submit -d "p4 add dollar"
+
 p4 edit b/c
 data >> b/c
 p4 submit -d "p4 change b/c"
