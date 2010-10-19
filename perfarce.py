@@ -1120,16 +1120,18 @@ def push(original, ui, repo, dest=None, **opts):
         if noid(d['desc']) == noiddesc:
             use = d['change']
 
-    def rev(files, abort=True):
+    def rev(files, change="", abort=True):
         if files:
             files = [f[0] for f in files]
             ui.note(_('reverting: %s\n') % ' '.join(files))
-            client.runs('revert -c %s' % use, files=files, abort=abort)
+            if change:
+                change = '-c %s' % change
+            client.runs('revert %s' % change, files=files, abort=abort)
 
     # revert any other changes in existing changelist
     if use:
         cl = client.describe(use)
-        rev(cl.files)
+        rev(cl.files, use)
 
     # revert any other changes to the files
     rev(mod + add + rem, abort=False)
