@@ -121,7 +121,7 @@ data() {
    DATA=$((DATA+1))
 }
 
-rm -fr $P4ROOT $P4PWD/src $P4PWD/dst $P4PWD/dst2 $P4PWD/new || true
+rm -fr $P4ROOT $P4PWD/src $P4PWD/dst $P4PWD/dst2 $P4PWD/dst3 $P4PWD/new || true
 
 echo % start the p4 server
 [ ! -d $P4ROOT ] && mkdir $P4ROOT
@@ -494,14 +494,36 @@ cd ../dst
 echo % pull before merge
 hg $HGDEBUG pull
 
-set -x
-
 echo % merge
 echo d | hg merge --config ui.merge=internal:other
 hg ci -m "merge"
 
 hg $HGDEBUG push
 
+cd ..
 
+echo % partial clone
+
+hg clone ${ENCODING:+--encoding $ENCODING} p4://$P4PORT/$P4CLIENT/bb dst3
+
+cd dst3
+hg $HGDEBUG up
+
+check_contents
+
+echo % partial push
+
+data >>d
+data >>e
+
+hg $HGDEBUG ci -m "hg partial d,e"
+hg $HGDEBUG push --submit
+
+cd ../dst2
+
+hg $HGDEBUG pull -u
+
+cmp -s bb/d ../dst3/d
+cmp -s bb/e ../dst3/e
 
 # EOF

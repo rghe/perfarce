@@ -9,11 +9,14 @@
 
 This extension modifies the remote repository handling so that repository
 paths that resemble
-    p4://p4server[:port]/clientname
+    p4://p4server[:port]/clientname[/path/to/directory]
 cause operations on the named p4 client specification on the p4 server.
 The client specification must already exist on the server before using
 this extension. Making changes to the client specification Views causes
 problems when synchronizing the repositories, and should be avoided.
+If a /path/to/directory is given then only a subset of the p4 view
+will be operated on. Multiple partial p4 views can use the same p4
+client specification.
 
 Five built-in commands are overridden:
 
@@ -134,9 +137,11 @@ class p4client(object):
 
             self.ui = ui
             self.repo = repo
-            self.server = None
-            self.client = None
-            self.root = None
+            self.server = None      # server name:port
+            self.client = None      # client spec name
+            self.root = None        # root directory of client workspace
+            self.partial = None     # tail of path for partial checkouts (ending in /)
+
             self.keep = ui.configbool('perfarce', 'keep', True)
             self.lowercasepaths = ui.configbool('perfarce', 'lowercasepaths', False)
             self.tags = ui.configbool('perfarce', 'tags', True)
@@ -180,6 +185,14 @@ class p4client(object):
                 s = '%s:1666' % s
             self.server = s
             if c:
+                if '/' in c:
+                    c, p = c.split('/', 1)
+                    p = '/'.join(q for q in p.split('/') if q)
+                    if p:
+                        p += '/'
+                else:
+                    p = ''
+
                 d = self.runs('client -o %s' % util.shellquote(c), abort=False)
                 code = d.get('code')
                 if code == 'error':
@@ -197,6 +210,8 @@ class p4client(object):
 
                 self.clientspec = d
                 self.client = c
+                self.partial = p
+
         except:
             if ui.traceback:ui.traceback()
             raise util.Abort(_('not a p4 repository'))
@@ -236,7 +251,7 @@ class p4client(object):
                 if 'p4' in extra:
                     if base:
                         while path:
-                            if dothgonly(path[0]) and not (mqnode and 
+                            if dothgonly(path[0]) and not (mqnode and
                                    self.repo.changelog.nodesbetween(mqnode, [ctx.node()])[0]):
                                 ctx = path[0]
                                 path = path[1:]
@@ -390,8 +405,9 @@ class p4client(object):
             for n in nodes:
                 self.p4stat.add(n)
 
-        for d in self.run('changes -l -c %s ...@%d,#head' %
-                           (util.shellquote(self.client), p4id)):
+        change = '%s...@%d,#head' % (self.partial, p4id)
+        for d in self.run('changes -l -c %s %s' %
+                           (util.shellquote(self.client), util.shellquote(change))):
             helper(self,d,p4id)
         for d in self.run('changes -l -c %s -s pending' %
                            (util.shellquote(self.client))):
@@ -537,14 +553,17 @@ class p4client(object):
         result = []
 
         if all:
-            p4cmd = 'fstat ...@%d' % change
+            p4cmd = 'fstat %s' % util.shellquote('%s...@%d' % (self.partial, change))
         else:
-            p4cmd = 'fstat -e %d ...' % change
+            p4cmd = 'fstat -e %d %s' % (change, util.shellquote('%s...' % self.partial))
 
-        if self.lowercasepaths:
-            root = util.pconvert(os.path.normcase(self.root))
+        if self.partial:
+            root = os.path.join(self.root, self.partial)
         else:
-            root = self.root
+            root = self.root + '/'
+        if self.lowercasepaths:
+            root = os.path.normcase(root)
+        root = util.pconvert(root)
 
         for d in self.run(p4cmd):
             if len(result) % 250 == 0:
@@ -557,19 +576,20 @@ class p4client(object):
             if 'desc' in d or d['clientFile'].startswith('.hg'):
                 continue
             else:
-                df = d['depotFile']
-                rv = d['headRev']
-                tp = d['headType']
-                ac = d['headAction']
                 lf = d['clientFile']
                 if self.lowercasepaths:
                    pathname, fname = os.path.split(lf)
                    lf = os.path.join(os.path.normcase(pathname), fname)
                 lf = util.pconvert(lf)
-                if lf.startswith('%s/' % root):
-                    lf = lf[len(root) + 1:]
+                if lf.startswith(root):
+                    lf = lf[len(root):]
                 else:
                     raise util.Abort(_('invalid p4 local path %s') % lf)
+
+                df = d['depotFile']
+                rv = d['headRev']
+                tp = d['headType']
+                ac = d['headAction']
                 result.append((df, int(rv), tp, self.actions[ac], lf))
 
         if hasattr(self.ui, 'progress'):
@@ -591,10 +611,10 @@ class p4client(object):
         elif force:
             cmd += ' -f'
         if not files:
-            cmd += ' ...@%d' % change
+            cmd += ' ' + util.shellquote('%s...@%d' % (self.partial, change))
 
         n = 0
-        for d in self.run(cmd, files=[("%s@%d" % (f, change)) for f in files], abort=False):
+        for d in self.run(cmd, files=[("%s@%d" % (os.path.join(self.partial, f), change)) for f in files], abort=False):
             n += 1
             if n % 250 == 0:
                 if hasattr(self.ui, 'progress'):
@@ -616,6 +636,8 @@ class p4client(object):
 
     def getfile(self, entry):
         '''Return contents of a file in the p4 depot at the given revision number.
+        Entry is a tuple
+            (depotname, revision, type, action, localname)
         If self.keep is set, assumes that the client is in sync.
         Raises IOError if the file is deleted.
         '''
@@ -628,7 +650,7 @@ class p4client(object):
             mode, keywords = self.decodetype(entry[2])
 
             if self.keep:
-                fn = os.sep.join([self.root, entry[4]])
+                fn = os.path.join(self.root, self.partial, entry[4])
                 fn = util.localpath(fn)
                 if mode == 'l':
                     try:
@@ -664,7 +686,8 @@ class p4client(object):
 
         tags = []
         if self.tags:
-            for d in self.run('labels ...@%d,%d' % (change, change)):
+            change = '%s...@%d,%d' % (self.partial, change, change)
+            for d in self.run('labels %s' % util.shellquote(change)):
                 l = d.get('label')
                 if l:
                     tags.append(l)
@@ -725,9 +748,10 @@ class p4client(object):
                 p4id = 0
 
         if stoprev:
-           p4cset = '...@%d,@%d' % (p4id, stoprev)
+           p4cset = '%s...@%d,@%d' % (client.partial, p4id, stoprev)
         else:
-           p4cset = '...@%d,#head' % p4id
+           p4cset = '%s...@%d,#head' % (client.partial, p4id)
+        p4cset = util.shellquote(p4cset)
 
         if startrev < 0:
             # most recent changelists
@@ -1124,11 +1148,12 @@ def push(original, ui, repo, dest=None, **opts):
 
     def rev(files, change="", abort=True):
         if files:
-            files = [f[0] for f in files]
-            ui.note(_('reverting: %s\n') % ' '.join(files))
+            ui.note(_('reverting: %s\n') % ' '.join(f[0] for f in files))
             if change:
                 change = '-c %s' % change
-            client.runs('revert %s' % change, files=files, abort=abort)
+            client.runs('revert %s' % change,
+                        files=[os.path.join(client.partial, f[0]) for f in files],
+                        abort=abort)
 
     # revert any other changes in existing changelist
     if use:
@@ -1156,9 +1181,9 @@ def push(original, ui, repo, dest=None, **opts):
             if 'x' in mode:
                 opt += "+x"
             opt = opt and " -t " + opt
-            partial = [f[0] for f in files if f[1]==mode]
-            if partial:
-                for d in client.run(cmd + opt, files=partial):
+            bunch = [os.path.join(client.partial, f[0]) for f in files if f[1]==mode]
+            if bunch:
+                for d in client.run(cmd + opt, files=bunch):
                     if d['code'] == 'info':
                         data = d['data']
                         if "- use 'reopen'" in data:
@@ -1171,7 +1196,7 @@ def push(original, ui, repo, dest=None, **opts):
 
         if mod or add:
             ui.note(_('retrieving file contents...\n'))
-            opener = util.opener(client.root)
+            opener = util.opener(os.path.join(client.root, client.partial))
 
             for name, mode in mod + add:
                 ui.debug(_('writing: %s\n') % name)
@@ -1181,7 +1206,7 @@ def push(original, ui, repo, dest=None, **opts):
                     fp = opener(name, mode="w")
                     fp.write(ctx[name].data())
                     fp.close()
-                util.set_flags(os.path.join(client.root, name), 'l' in mode, 'x' in mode)
+                util.set_flags(os.path.join(client.root, client.partial, name), 'l' in mode, 'x' in mode)
 
         if add:
             modal(_('opening for add: %s\n'), 'add -c %s' % use, add)
