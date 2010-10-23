@@ -851,6 +851,8 @@ class p4client(object):
                     ui.warn(_('source has mq patches applied\n'))
                 else:
                     raise util.Abort(_('source has mq patches applied'))
+        except error.RepoError:
+            pass
         except error.RepoLookupError:
             pass
 
