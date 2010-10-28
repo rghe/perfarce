@@ -203,6 +203,8 @@ class p4client(object):
                 for n in ['Root'] + ['AltRoots%d' % i for i in range(9)]:
                     if n in d and os.path.isdir(d[n]):
                         self.root = util.pconvert(d[n])
+                        if self.root.endswith('/'):
+                            self.root = self.root[:-1]
                         break
                 if not self.root:
                     ui.note(_('the p4 client root must exist\n'))
