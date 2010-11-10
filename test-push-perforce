@@ -193,6 +193,10 @@ data >> '$dollar.txt'
 p4 add '$dollar.txt'
 p4 submit -d "p4 add dollar"
 
+/bin/echo -e -n 'u\x00t\x00f\x001\x006\x00\n\x00' >utf16
+p4 add -t utf16 'utf16'
+p4 submit -d "p4 add utf16"
+
 p4 edit b/c
 data >> b/c
 p4 submit -d "p4 change b/c"

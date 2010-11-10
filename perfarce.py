@@ -276,6 +276,7 @@ class p4client(object):
 
         mode = ''
         keywords = None
+        utf16 = False
         p4type = self.re_type.match(p4type)
         if p4type:
             flags = (p4type.group(1) or '') + (p4type.group(3) or '')
@@ -283,11 +284,13 @@ class p4client(object):
                 mode = 'x'
             if p4type.group(2) == 'symlink':
                 mode = 'l'
+            if p4type.group(2) == 'utf16':
+                utf16 = True
             if 'ko' in flags:
                 keywords = self.re_keywords_old
             elif 'k' in flags:
                 keywords = self.re_keywords
-        return mode, keywords
+        return mode, keywords, utf16
 
 
     def decode(self, text):
@@ -649,7 +652,7 @@ class p4client(object):
             raise IOError()
 
         try:
-            mode, keywords = self.decodetype(entry[2])
+            mode, keywords, utf16 = self.decodetype(entry[2])
 
             if self.keep:
                 fn = os.path.join(self.root, self.partial, entry[4])
@@ -664,13 +667,25 @@ class p4client(object):
                 else:
                     contents = file(fn, 'rb').read()
             else:
+                cmd = 'print'
+                if utf16:
+                    fd, fn = tempfile.mkstemp(prefix='hg-p4-')
+                    os.close(fd)
+                    cmd += ' -o %s'%util.shellquote(fn)
+                cmd += ' %s#%d' % (util.shellquote(entry[0]), entry[1])
+
                 contents = []
-                for d in self.run('print %s#%d' % (util.shellquote(entry[0]), entry[1])):
+                for d in self.run(cmd):
                     code = d['code']
                     if code == 'text' or code == 'binary':
                         contents.append(d['data'])
 
-                contents = ''.join(contents)
+                if utf16:
+                    contents = file(fn, 'rb').read()
+                    os.unlink(fn)
+                else:
+                    contents = ''.join(contents)
+
                 if mode == 'l' and contents.endswith('\n'):
                     contents = contents[:-1]
 
