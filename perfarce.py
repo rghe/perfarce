@@ -216,7 +216,7 @@ class p4client(object):
 
         except:
             if ui.traceback:ui.traceback()
-            raise util.Abort(_('not a p4 repository'))
+            raise util.Abort(_('%s not a p4 repository') % path)
 
 
     def latest(self, base=False):
