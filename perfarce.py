@@ -1259,7 +1259,10 @@ def subrevcommon(mode, ui, repo, *changes, **opts):
     client = p4client(ui, repo, dest)
 
     if changes:
-        changes = [int(c) for c in changes]
+        try:
+            changes = [int(c) for c in changes]
+        except ValueError:
+            raise util.Abort(_('changelist must be a number'))
     elif opts['all']:
         changes = [e[0] for e in client.getpendinglist() if not e[1]]
         if not changes:
