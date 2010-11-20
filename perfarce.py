@@ -141,6 +141,7 @@ class p4client(object):
             self.client = None      # client spec name
             self.root = None        # root directory of client workspace
             self.partial = None     # tail of path for partial checkouts (ending in /)
+            self.rootpart = None    # root+partial directory in client workspace
 
             self.keep = ui.configbool('perfarce', 'keep', True)
             self.lowercasepaths = ui.configbool('perfarce', 'lowercasepaths', False)
@@ -213,6 +214,13 @@ class p4client(object):
                 self.clientspec = d
                 self.client = c
                 self.partial = p
+                if p:
+                    if self.lowercasepaths:
+                        p = os.path.normcase(p)
+                    p = os.path.join(self.root, p)
+                else:
+                    p = self.root + '/'
+                self.rootpart = util.pconvert(p)
 
         except:
             if ui.traceback:ui.traceback()
@@ -420,6 +428,23 @@ class p4client(object):
         self.p4pending.sort()
 
 
+    def repopath(self, path):
+        'Convert a p4 client path to a path relative to the hg root'
+        if self.lowercasepaths:
+            pathname, fname = os.path.split(path)
+            path = os.path.join(os.path.normcase(pathname), fname)
+
+        path = util.pconvert(path)
+        if not path.startswith(self.rootpart):
+            raise util.Abort(_('invalid p4 local path %s') % path)
+
+        return path[len(self.rootpart):]
+
+    def localpath(self, path):
+        'Convert a path relative to the hg root to a path in the p4 workarea'
+        return util.localpath(os.path.join(self.rootpart, path))
+
+
     def getuser(self, user):
         'get full name and email address of user'
         r = self.usercache.get(user)
@@ -562,14 +587,6 @@ class p4client(object):
         else:
             p4cmd = 'fstat -e %d %s' % (change, util.shellquote('%s...' % self.partial))
 
-        if self.partial:
-            root = os.path.join(self.root, self.partial)
-        else:
-            root = self.root + '/'
-        if self.lowercasepaths:
-            root = os.path.normcase(root)
-        root = util.pconvert(root)
-
         for d in self.run(p4cmd):
             if len(result) % 250 == 0:
                 if hasattr(self.ui, 'progress'):
@@ -581,16 +598,7 @@ class p4client(object):
             if 'desc' in d or d['clientFile'].startswith('.hg'):
                 continue
             else:
-                lf = d['clientFile']
-                if self.lowercasepaths:
-                   pathname, fname = os.path.split(lf)
-                   lf = os.path.join(os.path.normcase(pathname), fname)
-                lf = util.pconvert(lf)
-                if lf.startswith(root):
-                    lf = lf[len(root):]
-                else:
-                    raise util.Abort(_('invalid p4 local path %s') % lf)
-
+                lf = self.repopath(d['clientFile'])
                 df = d['depotFile']
                 rv = d['headRev']
                 tp = d['headType']
@@ -655,8 +663,7 @@ class p4client(object):
             mode, keywords, utf16 = self.decodetype(entry[2])
 
             if self.keep:
-                fn = os.path.join(self.root, self.partial, entry[4])
-                fn = util.localpath(fn)
+                fn = self.localpath(entry[4])
                 if mode == 'l':
                     try:
                         contents = os.readlink(fn)
@@ -1213,7 +1220,7 @@ def push(original, ui, repo, dest=None, **opts):
 
         if mod or add:
             ui.note(_('retrieving file contents...\n'))
-            opener = util.opener(os.path.join(client.root, client.partial))
+            opener = util.opener(client.rootpart)
 
             for name, mode in mod + add:
                 ui.debug(_('writing: %s\n') % name)
@@ -1223,7 +1230,7 @@ def push(original, ui, repo, dest=None, **opts):
                     fp = opener(name, mode="w")
                     fp.write(ctx[name].data())
                     fp.close()
-                util.set_flags(os.path.join(client.root, client.partial, name), 'l' in mode, 'x' in mode)
+                util.set_flags(client.localpath(name), 'l' in mode, 'x' in mode)
 
         if add:
             modal(_('opening for add: %s\n'), 'add -c %s' % use, add)
