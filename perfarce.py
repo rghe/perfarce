@@ -748,6 +748,8 @@ class p4client(object):
             client = p4client(ui, repo, source)
         except:
             if ui.traceback:ui.traceback()
+            if source.startswith('p4://'):
+                raise util.Abort(_('p4 client failed'))
             return True, original(ui, repo, source, **opts)
 
         # if present, --rev will be the last Perforce changeset number to get
