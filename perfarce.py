@@ -1075,6 +1075,8 @@ def clone(original, ui, source, dest=None, **opts):
         client = p4client(ui, None, source)
     except:
         if ui.traceback:ui.traceback()
+        if source.startswith('p4://'):
+            raise util.Abort(_('p4 client failed'))
         return original(ui, source, dest, **opts)
 
     if dest is None:
