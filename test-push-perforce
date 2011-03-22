@@ -213,6 +213,8 @@ cd ..
 
 hg version
 
+# ..........................................................................
+
 echo % convert
 
 hg $HGDEBUG convert -s p4 $DEPOTPATH/... dst
@@ -223,7 +225,7 @@ hg $HGDEBUG up
 
 check_contents() {
    hg glog --template '{rev} "{desc|firstline}" files: {files}\n' | filter
-   md5sum $(hg manifest | grep -v .hgtags)
+   hg manifest | grep -v '.hgtags' | xargs md5sum
 }
 check_contents
 
@@ -350,6 +352,8 @@ hg $HGDEBUG push -r tip  --submit
 echo % show tags
 hg tags | filter
 
+# ..........................................................................
+
 SERVER=$(p4 info|sed -r -e '/Server version/!d' -e 's,[^/]+/[^.]+/([^/]+)/.+$,\1,' -e 's/\..$//')
 if [ $SERVER -ge 2009 ] ; then
     cd ../src
@@ -369,6 +373,8 @@ if [ $SERVER -ge 2009 ] ; then
     hg $HGDEBUG pull --update
     check_contents
 fi
+
+# ..........................................................................
 
 if [ $SERVER -ge 2005 ] ; then
     echo % overlay mappings
@@ -391,6 +397,8 @@ if [ $SERVER -ge 2005 ] ; then
     hg $HGDEBUG pull --update
     check_contents
 fi
+
+# ..........................................................................
 
 if [ -n "$ENCODING" ] ; then
     echo % encoding
@@ -417,6 +425,66 @@ if [ -n "$ENCODING" ] ; then
 
     check_contents
 fi
+
+# ..........................................................................
+
+echo % escaped characters initiated on p4 side
+cd ../src
+p4 sync | filter
+
+data > '@'
+data > '#'
+data > '%'
+data > '*'
+p4 add -f '@' '#' '%' '*'
+p4 submit -d 'p4 add @ # % *'
+
+data > '%#@#%*@'
+p4 add -f '%#@#%*@'
+p4 submit -d 'p4 add %#@#%*@'
+
+p4 edit '%40' ; data > '@' ; p4 submit -d 'p4 change @'
+p4 edit '%23' ; data > '#' ; p4 submit -d 'p4 change #'
+p4 edit '%25' ; data > '%' ; p4 submit -d 'p4 change %'
+p4 edit '%2A' ; data > '*' ; p4 submit -d 'p4 change *'
+
+p4 edit '%25%23%40%23%25%2A%40'
+data > '%#@#%*@'
+p4 submit -d 'p4 change %#@#%*@'
+
+cd ../dst
+
+hg $HGDEBUG pull --update
+check_contents
+
+# ..........................................................................
+
+echo % escaped characters initiated on hg side
+
+data > '#@'
+data > '*%'
+hg $HGDEBUG add '#@' '*%'
+hg $HGDEBUG ci -m 'hg add #@ *%'
+hg $HGDEBUG push --submit
+
+data > '@'
+data > '#'
+hg $HGDEBUG ci -m 'hg modify @ #'
+
+hg $HGDEBUG rm '%'
+hg $HGDEBUG ci -m 'hg remove %'
+
+data > '*'
+data > '%#@#%*@'
+hg $HGDEBUG ci -m 'hg modify * %#@#%*@'
+
+hg $HGDEBUG push --submit
+check_contents
+
+cd ../src
+p4 sync
+
+# ..........................................................................
 
 echo % clone
 cd ..

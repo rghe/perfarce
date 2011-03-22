@@ -326,6 +326,11 @@ class p4client(object):
         return text
 
 
+    def encodename(self, name):
+        'escape @ # % * characters in a p4 filename'
+        return name.replace('%','%25').replace('@','%40').replace('#','%23').replace('*','%2A')
+
+
     def parsenodes(self, desc):
         'find revisions in p4 changelist description'
         m = self.re_hgid.search(desc)
@@ -1213,7 +1218,7 @@ def push(original, ui, repo, dest=None, **opts):
     ntg = [(cpy[f[0]], f[0]) for f in add if f[0] in cpy]
     add = [f for f in add if f[0] not in cpy]
 
-    def modal(note, cmd, files):
+    def modal(note, cmd, files, encoder):
         'Run command grouped by file mode'
         ui.note(note % ' '.join(f[0] for f in files))
         modes = set(f[1] for f in files)
@@ -1224,7 +1229,7 @@ def push(original, ui, repo, dest=None, **opts):
             if 'x' in mode:
                 opt += "+x"
             opt = opt and " -t " + opt
-            bunch = [os.path.join(client.partial, f[0]) for f in files if f[1]==mode]
+            bunch = [os.path.join(client.partial, encoder(f[0])) for f in files if f[1]==mode]
             if bunch:
                 for d in client.run(cmd + opt, files=bunch):
                     if d['code'] == 'info':
@@ -1235,7 +1240,7 @@ def push(original, ui, repo, dest=None, **opts):
     try:
         # now add/edit/delete the files
         if mod:
-            modal(_('opening for edit: %s\n'), 'edit -c %s' % use, mod)
+            modal(_('opening for edit: %s\n'), 'edit -c %s' % use, mod, client.encodename)
 
         if mod or add:
             ui.note(_('retrieving file contents...\n'))
@@ -1252,7 +1257,7 @@ def push(original, ui, repo, dest=None, **opts):
                 util.set_flags(client.localpath(name), 'l' in mode, 'x' in mode)
 
         if add:
-            modal(_('opening for add: %s\n'), 'add -c %s' % use, add)
+            modal(_('opening for add: %s\n'), 'add -f -c %s' % use, add, lambda n:n)
 
         if ntg:
             ui.note(_('opening for integrate: %s\n') % ' '.join(f[1] for f in ntg))
@@ -1260,7 +1265,7 @@ def push(original, ui, repo, dest=None, **opts):
                 client.runs('integrate -c %s %s %s' % (use, f[0], f[1]))
 
         if rem:
-            modal(_('opening for delete: %s\n'), 'delete -c %s' % use, rem)
+            modal(_('opening for delete: %s\n'), 'delete -c %s' % use, rem, client.encodename)
 
         # submit the changelist to p4 if --submit was given
         if opts['submit'] or ui.configbool('perfarce', 'submit', default=False):
