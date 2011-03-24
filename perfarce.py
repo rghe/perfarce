@@ -326,7 +326,8 @@ class p4client(object):
         return text
 
 
-    def encodename(self, name):
+    @staticmethod
+    def encodename(name):
         'escape @ # % * characters in a p4 filename'
         return name.replace('%','%25').replace('@','%40').replace('#','%23').replace('*','%2A')
 
@@ -759,8 +760,6 @@ class p4client(object):
             raise
         except:
             if ui.traceback:ui.traceback()
-            if source.startswith('p4://'):
-                raise util.Abort(_('p4 client failed'))
             return True, original(ui, repo, source, **opts)
 
         # if present, --rev will be the last Perforce changeset number to get
