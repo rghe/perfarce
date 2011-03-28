@@ -70,10 +70,16 @@ Five built-in commands are overridden:
               --config perfarce.lowercasepaths=False
            is True then the import forces all paths in lowercase,
            otherwise paths are recorded unchanged.  Filename case is
-           always preserved.
-           This setting is a workaround to handle Perforce depots
+           preserved.
+           If the option
+              --config perfarce.ignorecase=False
+           is True then the import ignores all case differences in
+           the p4 depot. Directory and filename case is preserved.
+           These two setting are workarounds to handle Perforce depots
            containing a path spelled differently from file to file
-           (e.g. path/foo and PAth/bar).
+           (e.g. path/foo and PAth/bar are in the same directory),
+           or where the same file may be spelled differently from time
+           to time (e.g. path/foo and path/FOO are the same object).
 '''
 
 from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, repo, util
@@ -149,6 +155,7 @@ class p4client(object):
 
             self.keep = ui.configbool('perfarce', 'keep', True)
             self.lowercasepaths = ui.configbool('perfarce', 'lowercasepaths', False)
+            self.ignorecase = ui.configbool('perfarce', 'ignorecase', False)
             self.tags = ui.configbool('perfarce', 'tags', True)
 
             # work out character set for p4 text (but not filenames)
@@ -220,7 +227,7 @@ class p4client(object):
                 self.partial = p
                 if p:
                     if self.lowercasepaths:
-                        p = os.path.normcase(p)
+                        p = self.normcase(p)
                     p = os.path.join(self.root, p)
                 else:
                     p = self.root + '/'
@@ -330,6 +337,12 @@ class p4client(object):
     def encodename(name):
         'escape @ # % * characters in a p4 filename'
         return name.replace('%','%25').replace('@','%40').replace('#','%23').replace('*','%2A')
+
+
+    @staticmethod
+    def normcase(name):
+        'convert path name to lower case'
+        return os.path.normpath(name).lower()
 
 
     def parsenodes(self, desc):
@@ -442,7 +455,7 @@ class p4client(object):
         'Convert a p4 client path to a path relative to the hg root'
         if self.lowercasepaths:
             pathname, fname = os.path.split(path)
-            path = os.path.join(os.path.normcase(pathname), fname)
+            path = os.path.join(self.normcase(pathname), fname)
 
         path = util.pconvert(path)
         if not path.startswith(self.rootpart):
@@ -1002,7 +1015,9 @@ def pull(original, ui, repo, source=None, **opts):
                 raise util.Abort(_('changelist for --startrev not found, first changelist is %s' % changes[0]))
 
     if client.lowercasepaths:
-        ui.status(_("converting pathnames to lowercase.\n"))
+        ui.note(_("converting pathnames to lowercase.\n"))
+    if client.ignorecase:
+        ui.note(_("ignoring case in file names.\n"))
 
     tags = {}
 
@@ -1018,8 +1033,6 @@ def pull(original, ui, repo, source=None, **opts):
                     client.runs('revert -k', files=[f[0] for f in files],
                                 abort=False)
                     client.sync(c, force=True, files=[f[0] for f in files])
-
-            entries = dict((f[4], f) for f in files)
 
             nodes = client.parsenodes(cl.desc)
             if nodes:
@@ -1037,8 +1050,24 @@ def pull(original, ui, repo, source=None, **opts):
             else:
                 extra = {'p4':c}
 
+            entries.clear()
+            if client.ignorecase:
+                manifiles = {}
+                for n in (p4rev, parent):
+                    if n:
+                        for f in repo[n]:
+                            manifiles[client.normcase(f)] = f
+                seen = set()
+                for f in files:
+                    g = client.normcase(f[4])
+                    if g not in seen:
+                        entries[manifiles.get(g, f[4])] = f
+                        seen.add(g)
+            else:
+                entries.update((f[4], f) for f in files)
+
             ctx = context.memctx(repo, (p4rev, parent), cl.desc,
-                                 [f[4] for f in files] + hgfiles,
+                                 entries.keys() + hgfiles,
                                  getfilectx, cl.user, cl.date, extra)
 
             p4rev = repo.commitctx(ctx)
@@ -1126,6 +1155,7 @@ def clone(original, ui, source, dest=None, **opts):
         fp.write("[paths]\n")
         fp.write("default = %s\n" % source)
         fp.write("\n[perfarce]\n")
+        fp.write("ignorecase = %s\n" % client.ignorecase)
         fp.write("keep = %s\n" % client.keep)
         fp.write("lowercasepaths = %s\n" % client.lowercasepaths)
         fp.write("tags = %s\n" % client.tags)
