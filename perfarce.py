@@ -82,7 +82,7 @@ Five built-in commands are overridden:
            to time (e.g. path/foo and path/FOO are the same object).
 '''
 
-from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, repo, util
+from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, repo, util, url
 from mercurial.node import hex, short
 from mercurial.i18n import _
 
@@ -1129,7 +1129,10 @@ def clone(original, ui, source, dest=None, **opts):
         ui.status(_("destination directory: %s\n") % dest)
     else:
         dest = ui.expandpath(dest)
-    dest = hg.localpath(dest)
+    try:
+        dest = hg.localpath(dest)
+    except AttributeError:
+        dest = url.localpath(dest)
 
     if not hg.islocal(dest):
         raise util.Abort(_("destination '%s' must be local") % dest)
