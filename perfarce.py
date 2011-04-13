@@ -238,7 +238,7 @@ class p4client(object):
             raise p4notclient(_('%s is not a valid p4 client') % path)
 
 
-    def latest(self, base=False):
+    def find(self, base=False, p4rev=None):
         '''Find the most recent revision which has the p4 extra data which
         gives the p4 changelist it was converted from. If base is True then
         return the most recent child of that revision where the only changes
@@ -266,7 +266,7 @@ class p4client(object):
         current = [(self.repo['default'],())]
         while current:
             next = []
-            self.ui.debug("latest: %s\n" % (" ".join(hex(c[0].node()) for c in current)))
+            self.ui.debug("find: %s\n" % (" ".join(hex(c[0].node()) for c in current)))
             for ctx,path in current:
                 extra = ctx.extra()
                 if 'p4' in extra:
@@ -278,7 +278,9 @@ class p4client(object):
                                 path = path[1:]
                             else:
                                 path = []
-                    return ctx.node(), int(extra['p4'])
+                    p4 = int(extra['p4'])
+                    if p4rev is None or p4==p4rev:
+                        return ctx.node(), p4
 
                 for p in ctx.parents():
                     if p and p not in seen:
@@ -427,7 +429,7 @@ class p4client(object):
         self.p4stat = set()
         self.p4pending = []
 
-        p4rev, p4id = self.latest()
+        p4rev, p4id = self.find()
 
         def helper(self,d,p4id):
             c = int(d['change'])
@@ -788,7 +790,7 @@ class p4client(object):
             client.encoding = opts.get('encoding')
 
         if len(repo):
-            p4rev, p4id = client.latest(base=True)
+            p4rev, p4id = client.find(base=True)
         else:
             p4rev = None
             if startrev > 0:
@@ -831,7 +833,7 @@ class p4client(object):
             if ui.traceback:ui.traceback()
             return True, original(ui, repo, dest, **opts)
 
-        p4rev, p4id = client.latest(base=True)
+        p4rev, p4id = client.find(base=True)
         ctx1 = repo[p4rev]
         rev = opts.get('rev')
 
@@ -1080,7 +1082,7 @@ def pull(original, ui, repo, source=None, **opts):
 
     finally:
         if tags:
-            p4rev, p4id = client.latest()
+            p4rev, p4id = client.find()
             ctx = repo[p4rev]
 
             if '.hgtags' in ctx:
@@ -1427,13 +1429,14 @@ def identify(ui, repo, *args, **opts):
         changelist = int(extra['p4'])
     else:
         client = p4client(ui, repo, 'p4:///')
-        p4rev, changelist = client.latest(base=opts.get('base'))
+        p4rev, changelist = client.find(base=opts.get('base'), p4rev=opts.get('changelist'))
         ctx = repo[p4rev]
 
     num = opts.get('num')
     doid = opts.get('id')
     dop4 = opts.get('p4')
     default = not (num or doid or dop4)
+    hexfunc = ui.verbose and hex or short
     output = []
 
     if default or dop4:
@@ -1441,7 +1444,7 @@ def identify(ui, repo, *args, **opts):
     if num:
         output.append(str(ctx.rev()))
     if default or doid:
-        output.append(str(ctx))
+        output.append(hexfunc(ctx.node()))
 
     ui.write("%s\n" % ' '.join(output))
 
@@ -1463,6 +1466,7 @@ cmdtable = {
     'p4identify':
         (   identify,
             [ ('b', 'base', None, _('show base revision for new incoming changes')),
+              ('c', 'changelist', 0, _('identify the specified p4 changelist')),
               ('i', 'id',   None, _('show global revision id')),
               ('n', 'num',  None, _('show local revision number')),
               ('p', 'p4',   None, _('show p4 revision number')),
