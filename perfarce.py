@@ -1216,7 +1216,7 @@ def push(original, ui, repo, dest=None, **opts):
         client.sync(p4id)
     else:
         client.sync(p4id, fake=True)
-        client.sync(p4id, force=True, files=[f[0] for f in mod])
+        client.sync(p4id, force=True, files=[client.encodename(f[0]) for f in mod])
 
     # attempt to reuse an existing changelist
     def noid(d):
