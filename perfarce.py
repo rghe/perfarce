@@ -1,6 +1,6 @@
 # Mercurial extension to push to and pull from Perforce depots.
 #
-# Copyright 2009-10 Frank Kingswood <frank@kingswood-consulting.co.uk>
+# Copyright 2009-11 Frank Kingswood <frank@kingswood-consulting.co.uk>
 #
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2, incorporated herein by reference.
@@ -768,6 +768,9 @@ class p4client(object):
     def pullcommon(original, ui, repo, source, **opts):
         'Shared code for pull and incoming'
 
+        if opts.get('mq',None):
+            return True, original(ui, repo, *(source and [source] or []), **opts)
+
         source = ui.expandpath(source or 'default')
         try:
             client = p4client(ui, repo, source)
@@ -775,7 +778,7 @@ class p4client(object):
             raise
         except:
             if ui.traceback:ui.traceback()
-            return True, original(ui, repo, source, **opts)
+            return True, original(ui, repo, *(source and [source] or []), **opts)
 
         # if present, --rev will be the last Perforce changeset number to get
         stoprev = opts.get('rev')
@@ -824,6 +827,9 @@ class p4client(object):
     def pushcommon(out, original, ui, repo, dest, **opts):
         'Shared code for push and outgoing'
 
+        if opts.get('mq',None):
+            return True, original(ui, repo, *(dest and [dest] or []), **opts)
+
         dest = ui.expandpath(dest or 'default-push', dest or 'default')
         try:
             client = p4client(ui, repo, dest)
@@ -831,7 +837,7 @@ class p4client(object):
             raise
         except:
             if ui.traceback:ui.traceback()
-            return True, original(ui, repo, dest, **opts)
+            return True, original(ui, repo, *(dest and [dest] or []), **opts)
 
         p4rev, p4id = client.find(base=True)
         ctx1 = repo[p4rev]
@@ -951,7 +957,7 @@ class p4client(object):
 
 # --------------------------------------------------------------------------
 
-def incoming(original, ui, repo, source='default', **opts):
+def incoming(original, ui, repo, source=None, **opts):
     '''show changes that would be pulled from the p4 source repository
     Returns 0 if there are incoming changes, 1 otherwise.
     '''
