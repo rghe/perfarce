@@ -85,8 +85,16 @@ Five built-in commands are overridden:
 from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, repo, util, url
 from mercurial.node import hex, short
 from mercurial.i18n import _
-
 import marshal, tempfile, os, re, string
+
+try:
+    # Mercurial 1.9
+    from mercurial import scmutil
+    util_opener = scmutil.opener
+    revpair = scmutil.revpair
+except ImportError:
+    util_opener = util.opener
+    revpair = cmdutil.revpair
 
 def uisetup(ui):
     '''monkeypatch pull and push for p4:// support'''
@@ -844,7 +852,7 @@ class p4client(object):
         rev = opts.get('rev')
 
         if rev:
-            n1, n2 = cmdutil.revpair(repo, rev)
+            n1, n2 = revpair(repo, rev)
             if n2:
                 ctx1 = repo[n1]
                 ctx1 = ctx1.parents()[0]
@@ -1137,10 +1145,16 @@ def clone(original, ui, source, dest=None, **opts):
         ui.status(_("destination directory: %s\n") % dest)
     else:
         dest = ui.expandpath(dest)
+    
     try:
-        dest = hg.localpath(dest)
+        # Mercurial 1.9
+        dest = util.urllocalpath(dest)
     except AttributeError:
-        dest = url.localpath(dest)
+        try:
+            # Mercurial 1.8.2
+            dest = url.localpath(dest)
+        except AttributeError:
+            dest = hg.localpath(dest)
 
     if not hg.islocal(dest):
         raise util.Abort(_("destination '%s' must be local") % dest)
@@ -1284,7 +1298,13 @@ def push(original, ui, repo, dest=None, **opts):
 
         if mod or add:
             ui.note(_('retrieving file contents...\n'))
-            opener = util.opener(client.rootpart)
+            opener = util_opener(client.rootpart)
+
+            try:
+                # Mercurial 1.9
+                setflags = util.setflags
+            except AttributeError:
+                setflags = util.set_flags
 
             for name, mode in mod + add:
                 ui.debug(_('writing: %s\n') % name)
@@ -1294,7 +1314,7 @@ def push(original, ui, repo, dest=None, **opts):
                     fp = opener(name, mode="w")
                     fp.write(ctx[name].data())
                     fp.close()
-                util.set_flags(client.localpath(name), 'l' in mode, 'x' in mode)
+                setflags(client.localpath(name), 'l' in mode, 'x' in mode)
 
         if add:
             modal(_('opening for add: %s\n'), 'add -f -c %s' % use, add, lambda n:n)
