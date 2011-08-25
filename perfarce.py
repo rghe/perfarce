@@ -287,7 +287,7 @@ class p4client(object):
                             else:
                                 path = []
                     p4 = int(extra['p4'])
-                    if p4rev is None or p4==p4rev:
+                    if not p4rev or p4==p4rev:
                         return ctx.node(), p4
 
                 for p in ctx.parents():
