@@ -7,11 +7,12 @@ DEBUG=0
 DOSHELL=0
 P4PWD=`pwd`
 P4ROOT=$P4PWD/depot
+P4D=p4d
 KEEP=true
 ENCODING=
 UNICODE=0
 
-while getopts "de:k:r:su" OPT ; do
+while getopts "de:k:p:r:su" OPT ; do
    case "$OPT" in
       d)
          DEBUG=1
@@ -21,6 +22,9 @@ while getopts "de:k:r:su" OPT ; do
          ;;
       k)
          KEEP=$OPTARG
+         ;;
+      p)
+         P4D=$OPTARG
          ;;
       r)
          P4ROOT=$OPTARG
@@ -41,11 +45,19 @@ done
 shift $(($OPTIND-1))
 
 if [ $HELP -ne 0 ] ; then
-   echo "Usage: $0 [-dkrs]"
+   echo "Usage: $0 [-dekprsu]"
    exit 1
 fi
 
 # ..........................................................................
+
+P4CHARSET=
+P4CONFIG=
+P4DIFF=
+P4EDITOR=
+P4PASSWD=
+P4PORT=
+P4USER=
 
 # test we have p4 available
 if [ -n "$TESTDIR" ] ; then
@@ -127,7 +139,7 @@ echo % start the p4 server
 [ ! -d $P4ROOT ] && mkdir $P4ROOT
 
 # start server
-p4d -f -J off >$P4ROOT/stdout 2>$P4ROOT/stderr &
+$P4D -f -J off >$P4ROOT/stdout 2>$P4ROOT/stderr &
 # wait for the server to initialize
 while ! p4 ; do
    sleep 1
@@ -139,11 +151,11 @@ if [ $UNICODE -ne 0 ] ; then
     sleep 1
 
     # convert database
-    p4d -xi
+    $P4D -xi
     sleep 1
 
     # restart server
-    p4d -f -J off >$P4ROOT/stdout 2>$P4ROOT/stderr &
+    $P4D -f -J off >$P4ROOT/stdout 2>$P4ROOT/stderr &
 
     P4CHARSET=$ENCODING
     export P4CHARSET
