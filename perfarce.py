@@ -246,7 +246,7 @@ class p4client(object):
             raise p4notclient(_('%s is not a valid p4 client') % path)
 
 
-    def find(self, base=False, p4rev=None):
+    def find(self, rev=None, base=False, p4rev=None):
         '''Find the most recent revision which has the p4 extra data which
         gives the p4 changelist it was converted from. If base is True then
         return the most recent child of that revision where the only changes
@@ -270,8 +270,13 @@ class p4client(object):
         except:
             mqnode = None
 
+        if rev is None:
+            current = self.repo['default']
+        else:
+            current = self.repo[rev]
+        
+        current = [(current,())]
         seen = set()
-        current = [(self.repo['default'],())]
         while current:
             next = []
             self.ui.debug("find: %s\n" % (" ".join(hex(c[0].node()) for c in current)))
@@ -1455,7 +1460,7 @@ def identify(ui, repo, *args, **opts):
         changelist = int(extra['p4'])
     else:
         client = p4client(ui, repo, 'p4:///')
-        p4rev, changelist = client.find(base=opts.get('base'), p4rev=opts.get('changelist'))
+        p4rev, changelist = client.find(rev='.', base=opts.get('base'), p4rev=opts.get('changelist'))
         ctx = repo[p4rev]
 
     num = opts.get('num')
