@@ -1460,7 +1460,12 @@ def identify(ui, repo, *args, **opts):
         changelist = int(extra['p4'])
     else:
         client = p4client(ui, repo, 'p4:///')
-        p4rev, changelist = client.find(rev='.', base=opts.get('base'), p4rev=opts.get('changelist'))
+        cl = opts.get('changelist')
+        if cl:
+            rev = None
+        else:
+            rev = '.'
+        p4rev, changelist = client.find(rev=rev, base=opts.get('base'), p4rev=cl)
         ctx = repo[p4rev]
 
     num = opts.get('num')
