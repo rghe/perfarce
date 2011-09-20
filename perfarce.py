@@ -85,7 +85,7 @@ Five built-in commands are overridden:
 from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, repo, util, url
 from mercurial.node import hex, short
 from mercurial.i18n import _
-import marshal, tempfile, os, re, string
+import marshal, tempfile, os, re, string, sys
 
 try:
     # Mercurial 1.9
@@ -220,8 +220,15 @@ class p4client(object):
                     ui.warn('%s\n' % data)
                     raise util.Abort(data)
 
+                if sys.platform.startswith("cygwin"):
+                    re_dospath = re.compile('[a-z]:\\\\',re.I)
+                    def isdir(d):
+                        return os.path.isdir(d) and not re_dospath.match(d[n])
+                else:
+                    isdir=os.path.isdir
+
                 for n in ['Root'] + ['AltRoots%d' % i for i in range(9)]:
-                    if n in d and os.path.isdir(d[n]):
+                    if n in d and isdir(d[n]):
                         self.root = util.pconvert(d[n])
                         if self.root.endswith('/'):
                             self.root = self.root[:-1]
