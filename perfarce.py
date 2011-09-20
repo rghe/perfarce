@@ -50,14 +50,21 @@ Five built-in commands are overridden:
               --config perfarce.tags=False
            can be used to disable pulling p4 tags (a.k.a. labels).
            The option
-              --config perfarce.clientuser="search replace"
+              --config perfarce.clientuser=script_or_regex
            can be used to enable quasi-multiuser operation, where
            several users submit changes to p4 with the same user name
            and have their real user name in the p4 client spec.
-           The search and replace regular expressions describe
-           the substitution to be made to turn a client spec name
-           into a user name. If the search regex does not match
-           then the username is left unchanged.
+           If the value of this parameter contains at least one space
+           then it is split into a search regular expression and
+           replacement string.  The search and replace regular expressions
+           describe the substitution to be made to turn a client spec name
+           into a user name. If the search regex does not match then the
+           username is left unchanged.
+           If the value of this parameter has no spaces then it is
+           taken as the name of a script to run. The script is run
+           with the client and user names as arguments. If the script
+           produces output then this is taken as the user name,
+           otherwise the username is left unchanged.
 
  incoming  If the source repository name starts with p4:// then this
            reports changes in the p4 depot that are not yet in the
@@ -490,20 +497,50 @@ class p4client(object):
         return util.localpath(os.path.join(self.rootpart, path))
 
 
-    def getuser(self, user):
-        'get full name and email address of user'
-        r = self.usercache.get(user)
+    def getuser(self, user, client=None):
+        'get full name and email address of user (and optionally client spec name)'
+        r = self.usercache.get((user,None)) or self.usercache.get((user,client))
         if r:
             return r
 
-        d = self.runs('user -o %s' % util.shellquote(user), abort=False)
-        if 'Update' in d:
-            try:
-                r = '%s <%s>' % (d['FullName'], d['Email'])
-                self.usercache[user] = r
+        # allow mapping the client name into a user name
+        cu = self.ui.config("perfarce","clientuser")
+
+        if " " in cu:
+            cus, cur = cu.split(" ", 1)
+            u, f = re.subn(cus, cur, client)
+            if f:
+                r = string.capwords(u)
+                self.usercache[(user, client)] = r
                 return r
-            except:
-                pass
+
+        elif cu:
+            cmd = "%s %s %s" % (util.expandpath(cu), util.shellquote(client), util.shellquote(user))
+            self.ui.debug('> %s\n' % cmd)
+
+            old = os.getcwd()
+            try:
+                os.chdir(self.root)
+                r = None
+                for r in util.popen(cmd):
+                    r = r.strip()
+                    self.ui.debug('< %r\n' % r)
+                if r:
+                    self.usercache[(user, client)] = r
+                    return r
+            finally:
+                os.chdir(old)
+
+        else:
+            d = self.runs('user -o %s' % util.shellquote(user), abort=False)
+            if 'Update' in d:
+                try:
+                    r = '%s <%s>' % (d['FullName'], d['Email'])
+                    self.usercache[(user, None)] = r
+                    return r
+                except:
+                    pass
+        
         return user
 
 
@@ -571,12 +608,13 @@ class p4client(object):
 
         self.ui.note(_('change %s\n') % change)
         d = self.runs('describe -s %s' % change)
+        client = d['client']
         r = self.description(change=d['change'],
                              desc=self.decode(d['desc']),
-                             user=self.getuser(self.decode(d['user'])),
+                             user=self.getuser(self.decode(d['user']), client),
                              date=(int(d['time']), 0),     # p4 uses UNIX epoch
                              status=d['status'],
-                             client=d['client'])
+                             client=client)
 
         if local:
             r.files = self.fstat(change)
@@ -604,14 +642,6 @@ class p4client(object):
             js = d['jobstat%d' % i]
             r.jobs.append((jn, js))
             i += 1
-
-        # quasi-multiuser operation, extract user name from client
-        cu = self.ui.config("perfarce","clientuser")
-        if cu:
-            cus, cur = cu.split(" ", 1)
-            u, f = re.subn(cus, cur, d['client'])
-            if f:
-                r.user = string.capwords(u)
 
         return r
 
