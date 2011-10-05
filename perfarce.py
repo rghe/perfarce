@@ -506,7 +506,7 @@ class p4client(object):
         # allow mapping the client name into a user name
         cu = self.ui.config("perfarce","clientuser")
 
-        if " " in cu:
+        if cu and " " in cu:
             cus, cur = cu.split(" ", 1)
             u, f = re.subn(cus, cur, client)
             if f:
