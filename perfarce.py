@@ -230,7 +230,7 @@ class p4client(object):
                 if sys.platform.startswith("cygwin"):
                     re_dospath = re.compile('[a-z]:\\\\',re.I)
                     def isdir(d):
-                        return os.path.isdir(d) and not re_dospath.match(d[n])
+                        return os.path.isdir(d) and not re_dospath.match(d)
                 else:
                     isdir=os.path.isdir
 
