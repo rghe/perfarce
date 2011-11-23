@@ -600,23 +600,24 @@ class p4client(object):
         '''Return p4 changelist description object with user name and date.
         If the local is true, then also collect a list of 5-tuples
             (depotname, revision, type, action, localname)
-        This does not work on pending changelists.
         If local is false then the files list returned holds 4-tuples
             (depotname, revision, type, action)
-        Retrieving the local filenames is potentially very slow.
+        Retrieving the local filenames is potentially very slow, even more
+        so when this is used on pending changelists.
         '''
 
-        self.ui.note(_('change %s\n') % change)
         d = self.runs('describe -s %s' % change)
         client = d['client']
+        status = d['status']
         r = self.description(change=d['change'],
                              desc=self.decode(d['desc']),
                              user=self.getuser(self.decode(d['user']), client),
                              date=(int(d['time']), 0),     # p4 uses UNIX epoch
-                             status=d['status'],
+                             status=status,
                              client=client)
 
-        if local:
+        files = {}
+        if local and status=='submitted':
             r.files = self.fstat(change)
         else:
             r.files = []
@@ -629,7 +630,8 @@ class p4client(object):
                 rv = d['rev%d' % i]
                 tp = d['type%d' % i]
                 ac = d['action%d' % i]
-                r.files.append((df, int(rv), tp, self.actions[ac]))
+                files[df] = item = (df, int(rv), tp, self.actions[ac])
+                r.files.append(item)
                 i += 1
 
         r.jobs = []
@@ -642,6 +644,11 @@ class p4client(object):
             js = d['jobstat%d' % i]
             r.jobs.append((jn, js))
             i += 1
+
+        if local and files:
+            r.files = []
+            for d in self.run('where', files=[f for f in files]):
+                r.files.append(files[d['depotFile']] + (self.repopath(d['path']),))
 
         return r
 
@@ -1081,6 +1088,7 @@ def pull(original, ui, repo, source=None, **opts):
 
     try:
         for c in changes:
+            ui.note(_('change %s\n') % c)
             cl = client.describe(c)
             files = client.fstat(c, all=bool(startrev))
 
@@ -1459,6 +1467,8 @@ def pending(ui, repo, dest=None, **opts):
         w = max(len(str(e[0])) for e in pl)
         for e in pl:
             if dolong:
+                if ui.verbose:
+                    cl = client.describe(e[0], local=True)
                 ui.write(_('changelist:  %d\n') % e[0])
                 if ui.verbose:
                     ui.write(_('client:      %s\n') % e[4])
@@ -1466,6 +1476,7 @@ def pending(ui, repo, dest=None, **opts):
                 for n in e[2]:
                     ui.write(_('revision:    %s\n') % hexfunc(n))
                 if ui.verbose:
+                    ui.write(_('files:       %s\n') % ' '.join(f[4] for f in cl.files))
                     ui.write(_('description:\n'))
                     ui.write(e[3])
                     ui.write('\n')
