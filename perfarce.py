@@ -959,7 +959,11 @@ class p4client(object):
             add = [(f, ctx2.flags(f)) for f in add]
             rem = [(f, "") for f in rem]
 
-            cpy = copies.copies(repo, ctx1, ctx2, repo[node.nullid])[0]
+            try:
+                # Mercurial 2.1
+                cpy = copies.pathcopies(ctx1, ctx2)
+            except AttributeError:
+                cpy = copies.copies(repo, ctx1, ctx2, repo[node.nullid])[0]
 
             # forget about copies with changes to the data
             forget = []
