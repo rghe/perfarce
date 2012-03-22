@@ -201,7 +201,7 @@ class p4client(object):
             try:
                 maxargs = ui.config('perfarce', 'maxargs')
                 self.MAXARGS = int(maxargs)
-            except:
+            except Exception:
                 if os.name == 'posix':
                     self.MAXARGS = 250
                 else:
@@ -255,7 +255,7 @@ class p4client(object):
                     p = self.root + '/'
                 self.rootpart = util.pconvert(p)
 
-        except:
+        except Exception:
             if ui.traceback:ui.traceback()
             raise p4notclient(_('%s is not a valid p4 client') % path)
 
@@ -281,14 +281,14 @@ class p4client(object):
 
         try:
             mqnode = [self.repo['qbase'].node()]
-        except:
+        except Exception:
             mqnode = None
 
         if rev is None:
             current = self.repo['default']
         else:
             current = self.repo[rev]
-        
+
         current = [(current,())]
         seen = set()
         while current:
@@ -382,7 +382,7 @@ class p4client(object):
             try:
                 nodes = self.repo.changelog.nodesbetween(
                     [self.repo[m.group(2)].node()], [self.repo[m.group(4) or m.group(2)].node()])[0]
-            except:
+            except Exception:
                 if self.ui.traceback:self.ui.traceback()
                 self.ui.note(_('ignoring hg revision range %s from p4\n' % m.group(1)))
         return nodes
@@ -420,7 +420,7 @@ class p4client(object):
                         elif code == 'info':
                             self.ui.note('p4: %s\n' % data)
                     yield d
-        except:
+        except Exception:
             os.chdir(old)
             raise
         os.chdir(old)
@@ -538,9 +538,9 @@ class p4client(object):
                     r = '%s <%s>' % (d['FullName'], d['Email'])
                     self.usercache[(user, None)] = r
                     return r
-                except:
+                except Exception:
                     pass
-        
+
         return user
 
 
@@ -578,7 +578,7 @@ class p4client(object):
         finally:
             try:
                 if fn: os.unlink(fn)
-            except:
+            except Exception:
                 pass
 
         if not change:
@@ -821,6 +821,22 @@ class p4client(object):
         self.p4stat = None
 
 
+    def hasmovecopy(self):
+        '''detect whether p4 move and p4 copy are supported.
+        these advanced features are available since about 2009.1 or so.'''
+
+        mc = []
+        for op in 'move','copy':
+            v = self.ui.configbool('perfarce', op, None)
+            if v is None:
+                self.ui.note(_('checking if p4 %s is supported, set perfarce.%s to skip this test\n') % (op, op))
+                d = self.runs('help %s' % op, abort=False)
+                v = d['code']=='info'
+            mc.append(v)
+        
+        return tuple(mc)
+
+
     @staticmethod
     def pullcommon(original, ui, repo, source, **opts):
         'Shared code for pull and incoming'
@@ -833,7 +849,7 @@ class p4client(object):
             client = p4client(ui, repo, source)
         except p4notclient:
             raise
-        except:
+        except Exception:
             if ui.traceback:ui.traceback()
             return True, original(ui, repo, *(source and [source] or []), **opts)
 
@@ -892,7 +908,7 @@ class p4client(object):
             client = p4client(ui, repo, dest)
         except p4notclient:
             raise
-        except:
+        except Exception:
             if ui.traceback:ui.traceback()
             return True, original(ui, repo, *(dest and [dest] or []), **opts)
 
@@ -1186,7 +1202,7 @@ def clone(original, ui, source, dest=None, **opts):
         client = p4client(ui, None, source)
     except p4notclient:
         raise
-    except:
+    except Exception:
         if ui.traceback:ui.traceback()
         return original(ui, source, dest, **opts)
 
@@ -1199,7 +1215,7 @@ def clone(original, ui, source, dest=None, **opts):
         ui.status(_("destination directory: %s\n") % dest)
     else:
         dest = ui.expandpath(dest)
-    
+
     try:
         # Mercurial 1.9
         dest = util.urllocalpath(dest)
@@ -1238,11 +1254,17 @@ def clone(original, ui, source, dest=None, **opts):
         fp.write("keep = %s\n" % client.keep)
         fp.write("lowercasepaths = %s\n" % client.lowercasepaths)
         fp.write("tags = %s\n" % client.tags)
+
         if client.encoding:
             fp.write("encoding = %s\n" % client.encoding)
         cu = ui.config("perfarce", "clientuser")
         if cu:
             fp.write("clientuser = %s\n" % cu)
+
+        move, copy = client.hasmovecopy()
+        fp.write("move = %s\n" % move)
+        fp.write("copy = %s\n" % copy)
+
         fp.close()
 
     return r
@@ -1280,6 +1302,8 @@ def push(original, ui, repo, dest=None, **opts):
     if done:
         return r
     client, p4rev, p4id, nodes, ctx, desc, mod, add, rem, cpy = r
+
+    move, copy = client.hasmovecopy()
 
     # sync to the last revision pulled, converted or submitted
     for e in client.getpendinglist():
@@ -1319,12 +1343,33 @@ def push(original, ui, repo, dest=None, **opts):
     # revert any other changes to the files
     rev(mod + add + rem, abort=False)
 
+    # sort out the copies from the adds
+    rems = {}
+    for f in rem:
+        rems[f[0]] = True
+
+    moves = []
+    copies = []
+    ntg = []
+    add2 = []
+    for f,g in add:
+        if f in cpy:
+            r = cpy[f]
+            if move and r in rems and rems[r]:
+                moves.append((r, f, g))
+                rems[r] = False
+            elif copy:
+                copies.append((r, f))
+            else:
+                ntg.append((r, f))
+        else:
+            add2.append((f,g))
+    add = add2
+
+    rem = [r for r in rem if rems[r[0]]]
+
     # create new changelist
     use = client.change(use, desc)
-
-    # sort out the copies from the adds
-    ntg = [(cpy[f[0]], f[0]) for f in add if f[0] in cpy]
-    add = [f for f in add if f[0] not in cpy]
 
     def modal(note, cmd, files, encoder):
         'Run command grouped by file mode'
@@ -1347,6 +1392,20 @@ def push(original, ui, repo, dest=None, **opts):
 
     try:
         # now add/edit/delete the files
+
+        if copies:
+            ui.note(_('copying: %s\n') % ' '.join(f[1] for f in copies))
+            for f in copies:
+                client.runs('copy -c %s %s %s' % (use, f[0], f[1]))
+
+        if moves:
+            modal(_('opening for move: %s\n'), 'edit -c %s' % use,
+                  [(f[0],f[2]) for f in moves], client.encodename)
+
+            ui.note(_('moving: %s\n') % ' '.join(f[1] for f in moves))
+            for f in moves:
+                client.runs('move -c %s %s %s' % (use, f[0], f[1]))
+
         if mod:
             modal(_('opening for edit: %s\n'), 'edit -c %s' % use, mod, client.encodename)
 
@@ -1376,7 +1435,7 @@ def push(original, ui, repo, dest=None, **opts):
         if ntg:
             ui.note(_('opening for integrate: %s\n') % ' '.join(f[1] for f in ntg))
             for f in ntg:
-                client.runs('integrate -c %s %s %s' % (use, f[0], f[1]))
+                client.runs('integrate -c %s -t %s %s' % (use, f[0], f[1]))
 
         if rem:
             modal(_('opening for delete: %s\n'), 'delete -c %s' % use, rem, client.encodename)
@@ -1387,7 +1446,7 @@ def push(original, ui, repo, dest=None, **opts):
         else:
             ui.note(_('pending changelist %s\n') % use)
 
-    except:
+    except Exception:
         revert(ui, repo, use, **opts)
         raise
 

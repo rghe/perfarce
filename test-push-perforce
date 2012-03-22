@@ -375,7 +375,9 @@ hg tags | filter
 # ..........................................................................
 
 SERVER=$(p4 info|sed -r -e '/Server version/!d' -e 's,[^/]+/[^.]+/([^/]+)/.+$,\1,' -e 's/\..$//')
+
 if [ $SERVER -ge 2009 ] ; then
+    echo % p4 move, new in p4 2009.1
     cd ../src
     p4 sync | filter
 
@@ -396,8 +398,14 @@ fi
 
 # ..........................................................................
 
+if [ $SERVER -ge 2011 ] ; then
+    echo % p4 copy, new in p4 2010.2
+fi
+
+# ..........................................................................
+
 if [ $SERVER -ge 2005 ] ; then
-    echo % overlay mappings
+    echo % overlay mappings, new in p4 2004.2
     cd ../src
 
     p4 sync | filter
