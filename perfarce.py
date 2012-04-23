@@ -98,9 +98,11 @@ try:
     # Mercurial 1.9
     from mercurial import scmutil
     util_opener = scmutil.opener
+    util_setflags = util.setflags
     revpair = scmutil.revpair
 except ImportError:
     util_opener = util.opener
+    util_setflags = util.set_flags
     revpair = cmdutil.revpair
 
 def uisetup(ui):
@@ -832,6 +834,7 @@ class p4client(object):
                 self.ui.note(_('checking if p4 %s is supported, set perfarce.%s to skip this test\n') % (op, op))
                 d = self.runs('help %s' % op, abort=False)
                 v = d['code']=='info'
+                self.ui.debug(_('p4 %s is %ssupported\n') % (op, ["not ",""][v]))
             mc.append(v)
         
         return tuple(mc)
@@ -981,13 +984,10 @@ class p4client(object):
             except AttributeError:
                 cpy = copies.copies(repo, ctx1, ctx2, repo[node.nullid])[0]
 
-            # forget about copies with changes to the data
-            forget = []
+            # remember which copies change the data
             for c in cpy:
-                if ctx2.flags(c) != ctx1.flags(c) or ctx2[c].data() != ctx1[cpy[c]].data():
-                    forget.append(c)
-            for c in forget:
-                del cpy[c]
+                chg = ctx2.flags(c) != ctx1.flags(c) or ctx2[c].data() != ctx1[cpy[c]].data()
+                cpy[c] = (cpy[c], chg)
 
             # remove .hg* files (mainly for .hgtags and .hgignore)
             for changes in [mod, add, rem]:
@@ -1028,6 +1028,12 @@ class p4client(object):
         h.append(repo[nodes[-1]].hex())
 
         desc='\n* * *\n'.join(desc) + '\n\n{{mercurial %s}}\n' % (':'.join(h))
+
+        if ui.debugflag:
+            ui.debug('mod = %r\n' % (mod,))
+            ui.debug('add = %r\n' % (add,))
+            ui.debug('rem = %r\n' % (rem,))
+            ui.debug('cpy = %r\n' % (cpy,))
 
         return False, (client, p4rev, p4id, nodes, ctx2, desc, mod, add, rem, cpy)
 
@@ -1348,13 +1354,14 @@ def push(original, ui, repo, dest=None, **opts):
     for f in rem:
         rems[f[0]] = True
 
-    moves = []
-    copies = []
-    ntg = []
-    add2 = []
+    moves = []      # src,dest,mode tuples for p4 move
+    copies = []     # src,dest tuples for p4 copy
+    ntg = []        # integrate
+    add2 = []       # additions left after copies removed
+    mod2 = []       # list of dest,mode for files modified as well as copied/moved
     for f,g in add:
         if f in cpy:
-            r = cpy[f]
+            r, chg = cpy[f]
             if move and r in rems and rems[r]:
                 moves.append((r, f, g))
                 rems[r] = False
@@ -1362,11 +1369,20 @@ def push(original, ui, repo, dest=None, **opts):
                 copies.append((r, f))
             else:
                 ntg.append((r, f))
+            if chg:
+                mod2.append((f,g))
         else:
             add2.append((f,g))
     add = add2
 
     rem = [r for r in rem if rems[r[0]]]
+
+    if ui.debugflag:
+        ui.debug('\nadd = %r\n' % (add,))
+        ui.debug('remove = %r\n' % (rem,))
+        ui.debug('copies = %r\n' % (copies,))
+        ui.debug('moves = %r\n' % (moves,))
+        ui.debug('integrate = %r\n' % (ntg,))
 
     # create new changelist
     use = client.change(use, desc)
@@ -1406,20 +1422,19 @@ def push(original, ui, repo, dest=None, **opts):
             for f in moves:
                 client.runs('move -c %s %s %s' % (use, f[0], f[1]))
 
-        if mod:
-            modal(_('opening for edit: %s\n'), 'edit -c %s' % use, mod, client.encodename)
+        if ntg:
+            ui.note(_('opening for integrate: %s\n') % ' '.join(f[1] for f in ntg))
+            for f in ntg:
+                client.runs('integrate -c %s -t %s %s' % (use, f[0], f[1]))
 
-        if mod or add:
+        if mod or mod2:
+            modal(_('opening for edit: %s\n'), 'edit -c %s' % use, mod + mod2, client.encodename)
+
+        if mod or add or mod2:
             ui.note(_('retrieving file contents...\n'))
             opener = util_opener(client.rootpart)
 
-            try:
-                # Mercurial 1.9
-                setflags = util.setflags
-            except AttributeError:
-                setflags = util.set_flags
-
-            for name, mode in mod + add:
+            for name, mode in mod + add + mod2:
                 ui.debug(_('writing: %s\n') % name)
                 if 'l' in mode:
                     opener.symlink(ctx[name].data(), name)
@@ -1427,15 +1442,10 @@ def push(original, ui, repo, dest=None, **opts):
                     fp = opener(name, mode="w")
                     fp.write(ctx[name].data())
                     fp.close()
-                setflags(client.localpath(name), 'l' in mode, 'x' in mode)
+                util_setflags(client.localpath(name), 'l' in mode, 'x' in mode)
 
         if add:
             modal(_('opening for add: %s\n'), 'add -f -c %s' % use, add, lambda n:n)
-
-        if ntg:
-            ui.note(_('opening for integrate: %s\n') % ' '.join(f[1] for f in ntg))
-            for f in ntg:
-                client.runs('integrate -c %s -t %s %s' % (use, f[0], f[1]))
 
         if rem:
             modal(_('opening for delete: %s\n'), 'delete -c %s' % use, rem, client.encodename)

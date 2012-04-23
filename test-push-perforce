@@ -374,7 +374,8 @@ hg tags | filter
 
 # ..........................................................................
 
-SERVER=$(p4 info|sed -r -e '/Server version/!d' -e 's,[^/]+/[^.]+/([^/]+)/.+$,\1,' -e 's/\..$//')
+SERVER=$(p4 info|sed -r -e '/Server version/!d' -e 's,[^/]+/[^.]+/([^/]+)/.+$,\1,' -e 's/\..+$//' )
+echo % server version $SERVER
 
 if [ $SERVER -ge 2009 ] ; then
     echo % p4 move, new in p4 2009.1
@@ -400,6 +401,49 @@ fi
 
 if [ $SERVER -ge 2011 ] ; then
     echo % p4 copy, new in p4 2010.2
+
+    cd ../dst
+
+    hg $HGDEBUG pull -u
+
+    hg copy a ac
+    hg $HGDEBUG ci -m "copy with p4 copy"
+
+    hg $HGDEBUG push --submit --config perfarce.copy=true --config perfarce.move=true
+
+    # ..........................................................................
+
+    echo % copy with edit
+
+    hg copy a ace1
+    data >>ace1
+    hg $HGDEBUG ci -m "copy+edit with p4 copy"
+
+    hg $HGDEBUG push --submit --config perfarce.copy=true --config perfarce.move=true
+
+    echo % copy(integrate) with edit
+
+    hg copy a ace2
+    data >>ace2
+    hg $HGDEBUG ci -m "copy+edit with p4 integ"
+
+    hg $HGDEBUG push --submit --config perfarce.copy=false --config perfarce.move=false
+
+    echo % move with edit
+
+    hg move ace1 acm1
+    data >>acm1
+    hg $HGDEBUG ci -m "move+edit with p4 copy"
+
+    hg $HGDEBUG push --submit --config perfarce.copy=true --config perfarce.move=true
+
+    echo % move(integrate) with edit
+
+    hg move ace2 acm2
+    data >>acm2
+    hg $HGDEBUG ci -m "move+edit e with p4 integ"
+
+    hg $HGDEBUG push --submit --config perfarce.copy=false --config perfarce.move=false
 fi
 
 # ..........................................................................
@@ -521,7 +565,6 @@ hg clone ${ENCODING:+--encoding $ENCODING} p4://$P4PORT/$P4CLIENT dst2
 
 cd dst2
 hg $HGDEBUG up
-
 check_contents
 
 cd ../src
