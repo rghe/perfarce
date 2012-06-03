@@ -111,11 +111,12 @@ EOF
 echo % create p4 depot
 
 if [ $DEBUG -ne 0 ] ; then
-    HGDEBUG="--debug --traceback"
+    HG="hg --debug --traceback"
     filter() { 
         cat
     }
 else
+    HG="hg"
     filter() { 
         sed -r -e 's,[A-Z][a-z][a-z] [A-Z][a-z][a-z] [0-9][0-9] [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4} \+[0-9]{4},DATE,' \
                -e 's,[0-9]{4}/[0-9]{2}/[0-9]{2},DATE,' \
@@ -237,11 +238,11 @@ hg version
 
 echo % convert
 
-hg $HGDEBUG convert -s p4 $DEPOTPATH/... dst
+$HG convert -s p4 $DEPOTPATH/... dst
 
 echo % now work in hg
 cd dst
-hg $HGDEBUG up
+$HG up
 
 check_contents() {
    hg glog --template '{rev} "{desc|firstline}" files: {files}\n' | filter
@@ -250,31 +251,31 @@ check_contents() {
 check_contents
 
 echo % nothing incoming
-if hg $HGDEBUG incoming ; then
+if $HG incoming ; then
    false
 fi
 
 echo % nothing outgoing
-if hg $HGDEBUG outgoing ; then
+if $HG outgoing ; then
    false
 fi
 
 echo % change some files in hg
 data >> a
-hg $HGDEBUG commit -m "hg change a"
+$HG commit -m "hg change a"
 
 data >> b/e
-hg $HGDEBUG add b/e
-hg $HGDEBUG ci -m "hg add b/e"
+$HG add b/e
+$HG ci -m "hg add b/e"
 
 data >>b/d
-hg $HGDEBUG commit -m "hg change b/d"
+$HG commit -m "hg change b/d"
 
 echo % id
-hg $HGDEBUG p4identify | filter
+$HG p4identify | filter
 
 echo % outgoing
-hg $HGDEBUG outgoing | filter
+$HG outgoing | filter
 
 echo % skip a changelist
 p4 change -o | sed -r 's/<.+>/test/' >change.$$
@@ -282,23 +283,23 @@ p4 change -d $(p4 change -i <change.$$ | awk '/created/ { print $2 }')
 rm change.$$
 
 echo % push
-hg $HGDEBUG push
+$HG push
 echo % p4pending
-hg $HGDEBUG p4pending | filter
+$HG p4pending | filter
 
 echo % pending
-hg $HGDEBUG p4pending | filter
+$HG p4pending | filter
 
 echo % submit
-hg $HGDEBUG p4submit -a
+$HG p4submit -a
 echo % echo % p4pending
-hg $HGDEBUG p4pending | filter
+$HG p4pending | filter
 
 echo % pending
-hg $HGDEBUG p4pending | filter
+$HG p4pending | filter
 
 echo % outgoing
-hg $HGDEBUG outgoing | filter
+$HG outgoing | filter
 
 echo % p4 results
 cd ../src
@@ -310,64 +311,64 @@ p4 tag -l change-seven ...
 cd ../dst
 
 echo % incoming
-hg $HGDEBUG incoming | filter
+$HG incoming | filter
 
 echo % pull
-hg $HGDEBUG pull --update
+$HG pull --update
 check_contents
 
 echo % push submit
 data >a
 data >c
-hg add c
-hg ci -m "ac" a c
-hg $HGDEBUG push --submit
+$HG add c
+$HG ci -m "ac" a c
+$HG push --submit
 
 echo % echo % p4pending
-hg $HGDEBUG p4pending | filter
+$HG p4pending | filter
 
 echo % hg tag
-hg $HGDEBUG pull --update
-hg tag -r 5 tag-created-in-hg
+$HG pull --update
+$HG tag -r 5 tag-created-in-hg
 
-hg $HGDEBUG push --submit
+$HG push --submit
 
 echo % copy files
-hg cp a aa
-hg $HGDEBUG commit -m "hg copy a"
+$HG cp a aa
+$HG commit -m "hg copy a"
 
-hg $HGDEBUG push -r tip --submit
+$HG push -r tip --submit
 
 echo % move files
-hg mv c cc
-hg $HGDEBUG commit -m "hg move c"
+$HG mv c cc
+$HG commit -m "hg move c"
 
-hg $HGDEBUG push -r tip  --submit
+$HG push -r tip  --submit
 
 echo % move dir
-hg mv b bb
-hg $HGDEBUG commit -m "hg move b"
+$HG mv b bb
+$HG commit -m "hg move b"
 
-hg $HGDEBUG push -r tip  --submit
-hg $HGDEBUG pull --update
+$HG push -r tip  --submit
+$HG pull --update
 
 echo % push repeatedly
 
 data >a
-hg $HGDEBUG commit -m "hg a once"
-hg $HGDEBUG push -r tip  --submit
+$HG commit -m "hg a once"
+$HG push -r tip  --submit
 
 data >a
-hg $HGDEBUG commit -m "hg a twice"
-hg $HGDEBUG push -r tip  --submit
+$HG commit -m "hg a twice"
+$HG push -r tip  --submit
 
 data >cc
-hg $HGDEBUG commit -m "hg cc once"
-hg $HGDEBUG push -r tip  --submit
+$HG commit -m "hg cc once"
+$HG push -r tip  --submit
 
 data >a
-hg $HGDEBUG commit -m "hg a again"
-hg $HGDEBUG push -r tip  --submit
+$HG commit -m "hg a again"
+$HG push -r tip  --submit
 
 echo % show tags
 hg tags | filter
@@ -393,7 +394,7 @@ if [ $SERVER -ge 2009 ] ; then
     p4 submit -d move-f-to-g
 
     cd ../dst
-    hg $HGDEBUG pull --update
+    $HG pull --update
     check_contents
 fi
 
@@ -404,46 +405,46 @@ if [ $SERVER -ge 2011 ] ; then
 
     cd ../dst
 
-    hg $HGDEBUG pull -u
+    $HG pull -u
 
-    hg copy a ac
-    hg $HGDEBUG ci -m "copy with p4 copy"
+    $HG copy a ac
+    $HG ci -m "copy with p4 copy"
 
-    hg $HGDEBUG push --submit --config perfarce.copy=true --config perfarce.move=true
+    $HG push --submit --config perfarce.copy=true --config perfarce.move=true
 
     # ..........................................................................
 
     echo % copy with edit
 
-    hg copy a ace1
+    $HG copy a ace1
     data >>ace1
-    hg $HGDEBUG ci -m "copy+edit with p4 copy"
+    $HG ci -m "copy+edit with p4 copy"
 
-    hg $HGDEBUG push --submit --config perfarce.copy=true --config perfarce.move=true
+    $HG push --submit --config perfarce.copy=true --config perfarce.move=true
 
-    echo % copy(integrate) with edit
+    echo % copy/integrate with edit
 
-    hg copy a ace2
+    $HG copy a ace2
     data >>ace2
-    hg $HGDEBUG ci -m "copy+edit with p4 integ"
+    $HG ci -m "copy+edit with p4 integ"
 
-    hg $HGDEBUG push --submit --config perfarce.copy=false --config perfarce.move=false
+    $HG push --submit --config perfarce.copy=false --config perfarce.move=false
 
     echo % move with edit
 
-    hg move ace1 acm1
+    $HG move ace1 acm1
     data >>acm1
-    hg $HGDEBUG ci -m "move+edit with p4 copy"
+    $HG ci -m "move+edit with p4 copy"
 
-    hg $HGDEBUG push --submit --config perfarce.copy=true --config perfarce.move=true
+    $HG push --submit --config perfarce.copy=true --config perfarce.move=true
 
-    echo % move(integrate) with edit
+    echo % move/integrate with edit
 
-    hg move ace2 acm2
+    $HG move ace2 acm2
     data >>acm2
-    hg $HGDEBUG ci -m "move+edit e with p4 integ"
+    $HG ci -m "move+edit e with p4 integ"
 
-    hg $HGDEBUG push --submit --config perfarce.copy=false --config perfarce.move=false
+    $HG push --submit --config perfarce.copy=false --config perfarce.move=false
 fi
 
 # ..........................................................................
@@ -466,7 +467,7 @@ if [ $SERVER -ge 2005 ] ; then
     p4 sync -f | filter
 
     cd ../dst
-    hg $HGDEBUG pull --update
+    $HG pull --update
     check_contents
 fi
 
@@ -489,11 +490,11 @@ if [ -n "$ENCODING" ] ; then
         echo "encoding=$ENCODING" >>.hg/hgrc
     fi
 
-    hg $HGDEBUG pull --update
+    $HG pull --update
 
     data >k
-    hg $HGDEBUG commit -m "hg change k special $(/bin/echo -e "\303\260\303\261\303\262\303\263\303\264\303\265\303\266\303\267") chars"
-    hg $HGDEBUG push --submit
+    $HG commit -m "hg change k special $(/bin/echo -e "\303\260\303\261\303\262\303\263\303\264\303\265\303\266\303\267") chars"
+    $HG push --submit
 
     check_contents
 fi
@@ -526,7 +527,7 @@ p4 submit -d 'p4 change %#@#%*@'
 
 cd ../dst
 
-hg $HGDEBUG pull --update
+$HG pull --update
 check_contents
 
 # ..........................................................................
@@ -535,22 +536,22 @@ echo % escaped characters initiated on hg side
 
 data > '#@'
 data > '*%'
-hg $HGDEBUG add '#@' '*%'
-hg $HGDEBUG ci -m 'hg add #@ *%'
-hg $HGDEBUG push --submit
+$HG add '#@' '*%'
+$HG ci -m 'hg add #@ *%'
+$HG push --submit
 
 data > '@'
 data > '#'
-hg $HGDEBUG ci -m 'hg modify @ #'
+$HG ci -m 'hg modify @ #'
 
-hg $HGDEBUG rm '%'
-hg $HGDEBUG ci -m 'hg remove %'
+$HG rm '%'
+$HG ci -m 'hg remove %'
 
 data > '*'
 data > '%#@#%*@'
-hg $HGDEBUG ci -m 'hg modify * %#@#%*@'
+$HG ci -m 'hg modify * %#@#%*@'
 
-hg $HGDEBUG push --submit
+$HG push --submit
 check_contents
 
 cd ../src
@@ -561,10 +562,10 @@ p4 sync
 echo % clone
 cd ..
 
-hg clone ${ENCODING:+--encoding $ENCODING} p4://$P4PORT/$P4CLIENT dst2
+$HG clone ${ENCODING:+--encoding $ENCODING} p4://$P4PORT/$P4CLIENT dst2
 
 cd dst2
-hg $HGDEBUG up
+$HG up
 check_contents
 
 cd ../src
@@ -589,23 +590,23 @@ p4 submit -d "add f3, mod f2 - repo"
 
 cd ../dst
 
-hg $HGDEBUG pull
-hg $HGDEBUG up
+$HG pull
+$HG up
 
 data >f2
 data >f4
-hg add f4
-hg ci -m "add f4, mod f2 - clone"
+$HG add f4
+$HG ci -m "add f4, mod f2 - clone"
 
 data >f1
 data >f5
-hg add f5
-hg ci -m "add f5, mod f1 - clone"
+$HG add f5
+$HG ci -m "add f5, mod f1 - clone"
 
 data >f3
 data >f6
-hg add f6
-hg ci -m "add f6, mod f3 - clone"
+$HG add f6
+$HG ci -m "add f6, mod f3 - clone"
 
 cd ../src
 
@@ -635,22 +636,22 @@ p4 submit -d "mod f3 - repo"
 cd ../dst
 
 echo % pull before merge
-hg $HGDEBUG pull
+$HG pull
 
 echo % merge
 echo d | hg merge --config ui.merge=internal:other
-hg ci -m "merge"
+$HG ci -m "merge"
 
-hg $HGDEBUG push
+$HG push
 
 cd ..
 
 echo % partial clone
 
-hg clone ${ENCODING:+--encoding $ENCODING} p4://$P4PORT/$P4CLIENT/bb dst3
+$HG clone ${ENCODING:+--encoding $ENCODING} p4://$P4PORT/$P4CLIENT/bb dst3
 
 cd dst3
-hg $HGDEBUG up
+$HG up
 
 check_contents
 
@@ -659,12 +660,12 @@ echo % partial push
 data >>d
 data >>e
 
-hg $HGDEBUG ci -m "hg partial d,e"
-hg $HGDEBUG push --submit
+$HG ci -m "hg partial d,e"
+$HG push --submit
 
 cd ../dst2
 
-hg $HGDEBUG pull -u
+$HG pull -u
 
 cmp -s bb/d ../dst3/d
 cmp -s bb/e ../dst3/e
