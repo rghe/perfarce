@@ -167,8 +167,8 @@ class p4client(object):
             self.server = None      # server name:port
             self.client = None      # client spec name
             self.root = None        # root directory of client workspace
-            self.partial = None     # tail of path for partial checkouts (ending in /)
-            self.rootpart = None    # root+partial directory in client workspace
+            self.partial = None     # tail of path for partial checkouts (ending in /), or empty string
+            self.rootpart = None    # root+partial directory in client workspace (ending in /)
 
             self.keep = ui.configbool('perfarce', 'keep', True)
             self.lowercasepaths = ui.configbool('perfarce', 'lowercasepaths', False)
@@ -254,8 +254,10 @@ class p4client(object):
                         p = self.normcase(p)
                     p = os.path.join(self.root, p)
                 else:
-                    p = self.root + '/'
+                    p = self.root
                 self.rootpart = util.pconvert(p)
+                if not self.rootpart.endswith('/'):
+                    self.rootpart += '/'
 
         except Exception:
             if ui.traceback:ui.traceback()
