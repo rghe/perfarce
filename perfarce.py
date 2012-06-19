@@ -1215,7 +1215,7 @@ def clone(original, ui, source, dest=None, **opts):
         return original(ui, source, dest, **opts)
 
     d = client.runs('info')
-    if d['clientName']=='*unknown*' or "clientRoot" not in d:
+    if not isinstance(d,dict) or d['clientName']=='*unknown*' or "clientRoot" not in d:
         raise util.Abort(_('%s is not a valid p4 client') % source)
 
     if dest is None:
