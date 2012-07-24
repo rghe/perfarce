@@ -335,23 +335,24 @@ class p4client(object):
     def decodetype(self, p4type):
         'decode p4 type name into mercurial mode string and keyword substitution regex'
 
-        mode = ''
+        base = mode = ''
         keywords = None
         utf16 = False
         p4type = self.re_type.match(p4type)
         if p4type:
+            base = p4type.group(2)
             flags = (p4type.group(1) or '') + (p4type.group(3) or '')
             if 'x' in flags:
                 mode = 'x'
-            if p4type.group(2) == 'symlink':
+            if base == 'symlink':
                 mode = 'l'
-            if p4type.group(2) == 'utf16':
+            if base == 'utf16':
                 utf16 = True
             if 'ko' in flags:
                 keywords = self.re_keywords_old
             elif 'k' in flags:
                 keywords = self.re_keywords
-        return mode, keywords, utf16
+        return base, mode, keywords, utf16
 
 
     def decode(self, text):
@@ -755,7 +756,7 @@ class p4client(object):
             raise IOError()
 
         try:
-            mode, keywords, utf16 = self.decodetype(entry[2])
+            basetype, mode, keywords, utf16 = self.decodetype(entry[2])
 
             if self.keep:
                 fn = self.localpath(entry[4])
@@ -1389,7 +1390,8 @@ def push(original, ui, repo, dest=None, **opts):
     rem = [r for r in rem if rems[r[0]]]
 
     if ui.debugflag:
-        ui.debug('\nadd = %r\n' % (add,))
+        ui.debug('mod = %r+%r\n' % (mod,mod2))
+        ui.debug('add = %r\n' % (add,))
         ui.debug('remove = %r\n' % (rem,))
         ui.debug('copies = %r\n' % (copies,))
         ui.debug('moves = %r\n' % (moves,))
@@ -1401,6 +1403,7 @@ def push(original, ui, repo, dest=None, **opts):
     def modal(note, cmd, files, encoder):
         'Run command grouped by file mode'
         ui.note(note % ' '.join(f[0] for f in files))
+        retype = []
         modes = set(f[1] for f in files)
         for mode in modes:
             opt = ""
@@ -1412,10 +1415,20 @@ def push(original, ui, repo, dest=None, **opts):
             bunch = [os.path.join(client.partial, encoder(f[0])) for f in files if f[1]==mode]
             if bunch:
                 for d in client.run(cmd + opt, files=bunch):
+                    if d['code'] == 'stat':
+                        basetype, oldmode, keywords, utf16 = client.decodetype(d['type'])
+                        if mode=='' and  oldmode=='x':
+                            retype.append((d['depotFile'], basetype))
+
                     if d['code'] == 'info':
                         data = d['data']
                         if "- use 'reopen'" in data:
                             raise util.Abort('p4: %s' % data)
+        modes = set(f[1] for f in retype)
+        for mode in modes:
+            bunch = [f[0] for f in retype if f[1]==mode]
+            if bunch:
+                client.runs("reopen -t %s"%mode, files=bunch)
 
     try:
         # now add/edit/delete the files
