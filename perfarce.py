@@ -1,6 +1,6 @@
 # Mercurial extension to push to and pull from Perforce depots.
 #
-# Copyright 2009-11 Frank Kingswood <frank@kingswood-consulting.co.uk>
+# Copyright 2009-12 Frank Kingswood <frank@kingswood-consulting.co.uk>
 #
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2, incorporated herein by reference.
@@ -50,6 +50,10 @@ Five built-in commands are overridden:
               --config perfarce.tags=False
            can be used to disable pulling p4 tags (a.k.a. labels).
            The option
+              --config perfarce.pull_trim_log=False
+           can be used to remove the {{mercurial}} node IDs from both
+           p4 and the imported changes. Use with care as this is a
+           non-reversible operation.
               --config perfarce.clientuser=script_or_regex
            can be used to enable quasi-multiuser operation, where
            several users submit changes to p4 with the same user name
