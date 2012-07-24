@@ -92,6 +92,7 @@ Five built-in commands are overridden:
 from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, repo, util, url
 from mercurial.node import hex, short
 from mercurial.i18n import _
+from mercurial.error import ConfigError
 import marshal, tempfile, os, re, string, sys
 
 try:
@@ -148,9 +149,12 @@ def loaditer(f):
     except EOFError:
         pass
 
-
 class p4notclient(util.Abort):
-    "Exception raised when a p4:// path is not a p4 client"
+    "Exception raised when a path is not a p4 client or invalid"
+    pass
+
+class p4badclient(util.Abort):
+    "Exception raised when a path is an invalid p4 client"
     pass
 
 class p4client(object):
@@ -158,111 +162,116 @@ class p4client(object):
     def __init__(self, ui, repo, path):
         'initialize a p4client class from the remote path'
 
+        if not path.startswith('p4:'):
+            raise p4notclient(_('%s not a p4 repository') % path)
         if not path.startswith('p4://'):
-            raise util.Abort(_('%s not a p4 repository') % path)
+            raise p4badclient(_('%s not a p4 repository') % path)
+
+        self.ui = ui
+        self.repo = repo
+        self.server = None      # server name:port
+        self.client = None      # client spec name
+        self.root = None        # root directory of client workspace
+        self.partial = None     # tail of path for partial checkouts (ending in /), or empty string
+        self.rootpart = None    # root+partial directory in client workspace (ending in /)
+
+        self.keep = ui.configbool('perfarce', 'keep', True)
+        self.lowercasepaths = ui.configbool('perfarce', 'lowercasepaths', False)
+        self.ignorecase = ui.configbool('perfarce', 'ignorecase', False)
 
         try:
-            self.ui = ui
-            self.repo = repo
-            self.server = None      # server name:port
-            self.client = None      # client spec name
-            self.root = None        # root directory of client workspace
-            self.partial = None     # tail of path for partial checkouts (ending in /), or empty string
-            self.rootpart = None    # root+partial directory in client workspace (ending in /)
-
-            self.keep = ui.configbool('perfarce', 'keep', True)
-            self.lowercasepaths = ui.configbool('perfarce', 'lowercasepaths', False)
-            self.ignorecase = ui.configbool('perfarce', 'ignorecase', False)
+            self.tags = ui.configint('perfarce', 'tags', -1)
+        except ConfigError,e:
+            self.tags = -1
+        if self.tags<0 or self.tags>2:
             self.tags = ui.configbool('perfarce', 'tags', True)
 
-            # work out character set for p4 text (but not filenames)
-            emap = { 'none': 'ascii',
-                     'utf8-bom': 'utf_8_sig',
-                     'macosroman': 'mac-roman',
-                     'winansi': 'cp1252' }
-            e = os.environ.get("P4CHARSET")
-            if e:
-                self.encoding = emap.get(e,e)
+        # work out character set for p4 text (but not filenames)
+        emap = { 'none': 'ascii',
+                 'utf8-bom': 'utf_8_sig',
+                 'macosroman': 'mac-roman',
+                 'winansi': 'cp1252' }
+        e = os.environ.get("P4CHARSET")
+        if e:
+            self.encoding = emap.get(e,e)
+        else:
+            self.encoding = ui.config('perfarce', 'encoding', None)
+
+        # caches
+        self.clientspec = {}
+        self.usercache = {}
+        self.p4stat = None
+        self.p4pending = None
+
+        # helpers to parse p4 output
+        self.re_type = re.compile('([a-z]+)?(text|binary|symlink|apple|resource|unicode|utf\d+)(\+\w+)?$')
+        self.re_keywords = re.compile(r'\$(Id|Header|Date|DateTime|Change|File|Revision|Author):[^$\n]*\$')
+        self.re_keywords_old = re.compile('\$(Id|Header):[^$\n]*\$')
+        self.re_hgid = re.compile('{{mercurial (([0-9a-f]{40})(:([0-9a-f]{40}))?)}}')
+        self.re_changeno = re.compile('Change ([0-9]+) created.+')
+        self.actions = { 'edit':'M', 'add':'A', 'move/add':'A', 'delete':'R', 'move/delete':'R', 'purge':'R', 'branch':'A', 'integrate':'M' }
+
+        try:
+            self.MAXARGS = ui.configint('perfarce', 'maxargs', 0)
+        except ConfigError:
+            self.MAXARGS = 0
+        if self.MAXARGS<1:
+            if os.name == 'posix':
+                self.MAXARGS = 250
             else:
-                self.encoding = ui.config('perfarce', 'encoding', None)
+                self.MAXARGS = 25
 
-            # caches
-            self.clientspec = {}
-            self.usercache = {}
-            self.p4stat = None
-            self.p4pending = None
-
-            # helpers to parse p4 output
-            self.re_type = re.compile('([a-z]+)?(text|binary|symlink|apple|resource|unicode|utf\d+)(\+\w+)?$')
-            self.re_keywords = re.compile(r'\$(Id|Header|Date|DateTime|Change|File|Revision|Author):[^$\n]*\$')
-            self.re_keywords_old = re.compile('\$(Id|Header):[^$\n]*\$')
-            self.re_hgid = re.compile('{{mercurial (([0-9a-f]{40})(:([0-9a-f]{40}))?)}}')
-            self.re_changeno = re.compile('Change ([0-9]+) created.+')
-            self.actions = { 'edit':'M', 'add':'A', 'move/add':'A', 'delete':'R', 'move/delete':'R', 'purge':'R', 'branch':'A', 'integrate':'M' }
-
-            try:
-                maxargs = ui.config('perfarce', 'maxargs')
-                self.MAXARGS = int(maxargs)
-            except Exception:
-                if os.name == 'posix':
-                    self.MAXARGS = 250
-                else:
-                    self.MAXARGS = 25
-
-            s, c = path[5:].split('/', 1)
-            if ':' not in s:
-                s = '%s:1666' % s
-            self.server = s
-            if c:
-                if '/' in c:
-                    c, p = c.split('/', 1)
-                    p = '/'.join(q for q in p.split('/') if q)
-                    if p:
-                        p += '/'
-                else:
-                    p = ''
-
-                d = self.runs('client -o %s' % util.shellquote(c), abort=False)
-                code = d.get('code')
-                if code == 'error':
-                    data=d['data'].strip()
-                    ui.warn('%s\n' % data)
-                    raise util.Abort(data)
-
-                if sys.platform.startswith("cygwin"):
-                    re_dospath = re.compile('[a-z]:\\\\',re.I)
-                    def isdir(d):
-                        return os.path.isdir(d) and not re_dospath.match(d)
-                else:
-                    isdir=os.path.isdir
-
-                for n in ['Root'] + ['AltRoots%d' % i for i in range(9)]:
-                    if n in d and isdir(d[n]):
-                        self.root = util.pconvert(d[n])
-                        if self.root.endswith('/'):
-                            self.root = self.root[:-1]
-                        break
-                if not self.root:
-                    ui.note(_('the p4 client root must exist\n'))
-                    assert False
-
-                self.clientspec = d
-                self.client = c
-                self.partial = p
+        s, c = path[5:].split('/', 1)
+        if ':' not in s:
+            s = '%s:1666' % s
+        self.server = s
+        if c:
+            if '/' in c:
+                c, p = c.split('/', 1)
+                p = '/'.join(q for q in p.split('/') if q)
                 if p:
-                    if self.lowercasepaths:
-                        p = self.normcase(p)
-                    p = os.path.join(self.root, p)
-                else:
-                    p = self.root
-                self.rootpart = util.pconvert(p)
-                if not self.rootpart.endswith('/'):
-                    self.rootpart += '/'
+                    p += '/'
+            else:
+                p = ''
 
-        except Exception:
-            if ui.traceback:ui.traceback()
-            raise p4notclient(_('%s is not a valid p4 client') % path)
+            d = self.runs('client -o %s' % util.shellquote(c), abort=False)
+            if not isinstance(d, dict):
+                raise p4badclient(_('%s is not a valid p4 client') % path)
+            code = d.get('code')
+            if code == 'error':
+                data=d['data'].strip()
+                ui.warn('%s\n' % data)
+                raise p4badclient(_('%s is not a valid p4 client: %s') % (path, data))
 
+            if sys.platform.startswith("cygwin"):
+                re_dospath = re.compile('[a-z]:\\\\',re.I)
+                def isdir(d):
+                    return os.path.isdir(d) and not re_dospath.match(d)
+            else:
+                isdir=os.path.isdir
+
+            for n in ['Root'] + ['AltRoots%d' % i for i in range(9)]:
+                if n in d and isdir(d[n]):
+                    self.root = util.pconvert(d[n])
+                    if self.root.endswith('/'):
+                        self.root = self.root[:-1]
+                    break
+            if not self.root:
+                ui.note(_('the p4 client root must exist\n'))
+                raise p4badclient(_('the p4 client root must exist\n'))
+
+            self.clientspec = d
+            self.client = c
+            self.partial = p
+            if p:
+                if self.lowercasepaths:
+                    p = self.normcase(p)
+                p = os.path.join(self.root, p)
+            else:
+                p = self.root
+            self.rootpart = util.pconvert(p)
+            if not self.rootpart.endswith('/'):
+                self.rootpart += '/'
 
     def find(self, rev=None, base=False, p4rev=None):
         '''Find the most recent revision which has the p4 extra data which
@@ -853,10 +862,10 @@ class p4client(object):
         try:
             client = p4client(ui, repo, source)
         except p4notclient:
-            raise
-        except Exception:
             if ui.traceback:ui.traceback()
             return True, original(ui, repo, *(source and [source] or []), **opts)
+        except p4badclient,e:
+            raise util.Abort(str(e))
 
         # if present, --rev will be the last Perforce changeset number to get
         stoprev = opts.get('rev')
@@ -912,10 +921,10 @@ class p4client(object):
         try:
             client = p4client(ui, repo, dest)
         except p4notclient:
-            raise
-        except Exception:
             if ui.traceback:ui.traceback()
             return True, original(ui, repo, *(dest and [dest] or []), **opts)
+        except p4badclient,e:
+            raise util.Abort(str(e))
 
         p4rev, p4id = client.find(base=True)
         ctx1 = repo[p4rev]
@@ -1209,10 +1218,10 @@ def clone(original, ui, source, dest=None, **opts):
     try:
         client = p4client(ui, None, source)
     except p4notclient:
-        raise
-    except Exception:
         if ui.traceback:ui.traceback()
         return original(ui, source, dest, **opts)
+    except p4badclient,e:
+        raise util.Abort(str(e))
 
     d = client.runs('info')
     if not isinstance(d,dict) or d['clientName']=='*unknown*' or "clientRoot" not in d:
