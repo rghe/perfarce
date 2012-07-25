@@ -50,10 +50,6 @@ Five built-in commands are overridden:
               --config perfarce.tags=False
            can be used to disable pulling p4 tags (a.k.a. labels).
            The option
-              --config perfarce.pull_trim_log=False
-           can be used to remove the {{mercurial}} node IDs from both
-           p4 and the imported changes. Use with care as this is a
-           non-reversible operation.
               --config perfarce.clientuser=script_or_regex
            can be used to enable quasi-multiuser operation, where
            several users submit changes to p4 with the same user name
@@ -403,7 +399,7 @@ class p4client(object):
             except Exception:
                 if self.ui.traceback:self.ui.traceback()
                 self.ui.note(_('ignoring hg revision range %s from p4\n' % m.group(1)))
-        return nodes, m
+        return nodes
 
 
     def run(self, cmd, files=[], abort=True, client=None):
@@ -482,7 +478,7 @@ class p4client(object):
                 return
 
             desc = d['desc']
-            nodes, match = self.parsenodes(desc)
+            nodes = self.parsenodes(desc)
             entry = (c, d['status'] == 'submitted', nodes, desc, d['client'])
             self.p4pending.append(entry)
             for n in nodes:
@@ -562,7 +558,7 @@ class p4client(object):
         return user
 
 
-    def change(self, change=None, description=None, update=False):
+    def change(self, change=None, description=None):
         '''Create a new p4 changelist or update an existing changelist with
         the given description. Returns the changelist number as a string.'''
 
@@ -581,7 +577,7 @@ class p4client(object):
             fp.close()
 
             # update p4 changelist
-            d = self.runs('change -i%s <%s' % (update and " -u" or "", util.shellquote(fn)))
+            d = self.runs('change -i <%s' % util.shellquote(fn))
             data = d['data']
             if d['code'] == 'info':
                 if not self.ui.verbose:
@@ -1127,7 +1123,6 @@ def pull(original, ui, repo, source=None, **opts):
         ui.note(_("ignoring case in file names.\n"))
 
     tags = {}
-    trim = ui.configbool('perfarce', 'pull_trim_log', False)
 
     try:
         for c in changes:
@@ -1143,16 +1138,10 @@ def pull(original, ui, repo, source=None, **opts):
                                 abort=False)
                     client.sync(c, force=True, files=[f[0] for f in files])
 
-            nodes, match = client.parsenodes(cl.desc)
+            nodes = client.parsenodes(cl.desc)
             if nodes:
                 parent = nodes[-1]
                 hgfiles = [f for f in repo[parent].files() if f.startswith('.hg')]
-                if trim:
-                    # remove mercurial id from description in p4
-                    cl.desc = cl.desc[:match.start(0)] + cl.desc[match.end(0):]
-                    if cl.desc.endswith("\n\n\n"):
-                        cl.desc = cl.desc[:-2]
-                    client.change(c, cl.desc, update=True)
             else:
                 parent = None
                 hgfiles = []
