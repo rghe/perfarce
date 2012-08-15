@@ -98,6 +98,7 @@ from mercurial.node import hex, short
 from mercurial.i18n import _
 from mercurial.error import ConfigError
 import marshal, tempfile, os, re, string, sys
+propertycache=util.propertycache
 
 try:
     # Mercurial 1.9
@@ -105,7 +106,7 @@ try:
     util_opener = scmutil.opener
     util_setflags = util.setflags
     revpair = scmutil.revpair
-except ImportError:
+except (ImportError,AttributeError):
     util_opener = util.opener
     util_setflags = util.set_flags
     revpair = cmdutil.revpair
@@ -183,47 +184,11 @@ class p4client(object):
         self.lowercasepaths = ui.configbool('perfarce', 'lowercasepaths', False)
         self.ignorecase = ui.configbool('perfarce', 'ignorecase', False)
 
-        try:
-            self.tags = ui.configint('perfarce', 'tags', -1)
-        except ConfigError,e:
-            self.tags = -1
-        if self.tags<0 or self.tags>2:
-            self.tags = ui.configbool('perfarce', 'tags', True)
-
-        # work out character set for p4 text (but not filenames)
-        emap = { 'none': 'ascii',
-                 'utf8-bom': 'utf_8_sig',
-                 'macosroman': 'mac-roman',
-                 'winansi': 'cp1252' }
-        e = os.environ.get("P4CHARSET")
-        if e:
-            self.encoding = emap.get(e,e)
-        else:
-            self.encoding = ui.config('perfarce', 'encoding', None)
-
         # caches
         self.clientspec = {}
         self.usercache = {}
         self.p4stat = None
         self.p4pending = None
-
-        # helpers to parse p4 output
-        self.re_type = re.compile('([a-z]+)?(text|binary|symlink|apple|resource|unicode|utf\d+)(\+\w+)?$')
-        self.re_keywords = re.compile(r'\$(Id|Header|Date|DateTime|Change|File|Revision|Author):[^$\n]*\$')
-        self.re_keywords_old = re.compile('\$(Id|Header):[^$\n]*\$')
-        self.re_hgid = re.compile('{{mercurial (([0-9a-f]{40})(:([0-9a-f]{40}))?)}}')
-        self.re_changeno = re.compile('Change ([0-9]+) created.+')
-        self.actions = { 'edit':'M', 'add':'A', 'move/add':'A', 'delete':'R', 'move/delete':'R', 'purge':'R', 'branch':'A', 'integrate':'M' }
-
-        try:
-            self.MAXARGS = ui.configint('perfarce', 'maxargs', 0)
-        except ConfigError:
-            self.MAXARGS = 0
-        if self.MAXARGS<1:
-            if os.name == 'posix':
-                self.MAXARGS = 250
-            else:
-                self.MAXARGS = 25
 
         s, c = path[5:].split('/', 1)
         if ':' not in s:
@@ -335,6 +300,12 @@ class p4client(object):
 
         raise util.Abort(_('no p4 changelist revision found'))
 
+    @propertycache
+    def re_type(self): return re.compile('([a-z]+)?(text|binary|symlink|apple|resource|unicode|utf\d+)(\+\w+)?$')
+    @propertycache
+    def re_keywords(self): return re.compile(r'\$(Id|Header|Date|DateTime|Change|File|Revision|Author):[^$\n]*\$')
+    @propertycache
+    def re_keywords_old(self): return re.compile('\$(Id|Header):[^$\n]*\$')
 
     def decodetype(self, p4type):
         'decode p4 type name into mercurial mode string and keyword substitution regex'
@@ -358,6 +329,18 @@ class p4client(object):
                 keywords = self.re_keywords
         return base, mode, keywords, utf16
 
+
+    @propertycache
+    def encoding(self):
+        # work out character set for p4 text (but not filenames)
+        emap = { 'none': 'ascii',
+                 'utf8-bom': 'utf_8_sig',
+                 'macosroman': 'mac-roman',
+                 'winansi': 'cp1252' }
+        e = os.environ.get("P4CHARSET")
+        if e:
+            return emap.get(e,e)
+        return self.ui.config('perfarce', 'encoding', None)
 
     def decode(self, text):
         'decode text in p4 character set as utf-8'
@@ -391,6 +374,8 @@ class p4client(object):
         'convert path name to lower case'
         return os.path.normpath(name).lower()
 
+    @propertycache
+    def re_hgid(self): return re.compile('{{mercurial (([0-9a-f]{40})(:([0-9a-f]{40}))?)}}')
 
     def parsenodes(self, desc):
         'find revisions in p4 changelist description'
@@ -405,6 +390,18 @@ class p4client(object):
                 self.ui.note(_('ignoring hg revision range %s from p4\n' % m.group(1)))
         return nodes, m
 
+    @propertycache
+    def maxargs(self):
+        try:
+            r = self.ui.configint('perfarce', 'maxargs', 0)
+        except ConfigError:
+            r = 0
+        if r<1:
+            if os.name == 'posix':
+                r = 250
+            else:
+                r = 25
+        return r
 
     def run(self, cmd, files=[], abort=True, client=None):
         'Run a P4 command and yield the objects returned'
@@ -423,8 +420,8 @@ class p4client(object):
             if self.root:
                 os.chdir(self.root)
 
-            for i in range(0, len(files), self.MAXARGS) or [0]:
-                cs = ' '.join(c + [util.shellquote(f) for f in files[i:i + self.MAXARGS]])
+            for i in range(0, len(files), self.maxargs) or [0]:
+                cs = ' '.join(c + [util.shellquote(f) for f in files[i:i + self.maxargs]])
                 if self.ui.debugflag: self.ui.debug('> %s\n' % cs)
 
                 for d in loaditer(util.popen(cs, mode='rb')):
@@ -562,6 +559,9 @@ class p4client(object):
         return user
 
 
+    @propertycache
+    def re_changeno(self): return re.compile('Change ([0-9]+) created.+')
+
     def change(self, change=None, description=None, update=False):
         '''Create a new p4 changelist or update an existing changelist with
         the given description. Returns the changelist number as a string.'''
@@ -613,6 +613,8 @@ class p4client(object):
         def __init__(self, **args):
             self.__dict__.update(args)
 
+
+    actions = { 'edit':'M', 'add':'A', 'move/add':'A', 'delete':'R', 'move/delete':'R', 'purge':'R', 'branch':'A', 'integrate':'M' }
 
     def describe(self, change, local=None):
         '''Return p4 changelist description object with user name and date.
@@ -805,6 +807,16 @@ class p4client(object):
             raise util.Abort(_('file %s missing in p4 workspace') % entry[4])
 
 
+    @propertycache
+    def tags(self):
+        try:
+            t = self.ui.configint('perfarce', 'tags', -1)
+        except ConfigError,e:
+            t = -1
+        if t<0 or t>2:
+            t = self.ui.configbool('perfarce', 'tags', True)
+        return t
+
     def labels(self, change):
         'Return p4 labels a.k.a. tags at the given changelist'
 
@@ -852,7 +864,7 @@ class p4client(object):
                 v = d['code']=='info'
                 self.ui.debug(_('p4 %s is %ssupported\n') % (op, ["not ",""][v]))
             mc.append(v)
-        
+
         return tuple(mc)
 
 
