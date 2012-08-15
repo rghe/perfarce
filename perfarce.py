@@ -413,32 +413,26 @@ class p4client(object):
         if client or self.client:
             c.append('-c')
             c.append(client or self.client)
+        if self.root:
+            c.append('-d')
+            c.append(self.root)
         c.append(cmd)
 
-        old = os.getcwd()
-        try:
-            if self.root:
-                os.chdir(self.root)
+        for i in range(0, len(files), self.maxargs) or [0]:
+            cs = ' '.join(c + [util.shellquote(f) for f in files[i:i + self.maxargs]])
+            if self.ui.debugflag: self.ui.debug('> %s\n' % cs)
 
-            for i in range(0, len(files), self.maxargs) or [0]:
-                cs = ' '.join(c + [util.shellquote(f) for f in files[i:i + self.maxargs]])
-                if self.ui.debugflag: self.ui.debug('> %s\n' % cs)
-
-                for d in loaditer(util.popen(cs, mode='rb')):
-                    if self.ui.debugflag: self.ui.debug('< %r\n' % d)
-                    code = d.get('code')
-                    data = d.get('data')
-                    if code is not None and data is not None:
-                        data = data.strip()
-                        if abort and code == 'error':
-                            raise util.Abort('p4: %s' % data)
-                        elif code == 'info':
-                            self.ui.note('p4: %s\n' % data)
-                    yield d
-        except Exception:
-            os.chdir(old)
-            raise
-        os.chdir(old)
+            for d in loaditer(util.popen(cs, mode='rb')):
+                if self.ui.debugflag: self.ui.debug('< %r\n' % d)
+                code = d.get('code')
+                data = d.get('data')
+                if code is not None and data is not None:
+                    data = data.strip()
+                    if abort and code == 'error':
+                        raise util.Abort('p4: %s' % data)
+                    elif code == 'info':
+                        self.ui.note('p4: %s\n' % data)
+                yield d
 
 
     def runs(self, cmd, one=True, **args):
