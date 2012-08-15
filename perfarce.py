@@ -1088,6 +1088,9 @@ def incoming(original, ui, repo, source=None, **opts):
     if done:
         return r
 
+    limit = opts['limit']
+    limit = limit and int(limit) or 0
+
     client, p4rev, p4id, startrev, changes = r
     for c in changes:
         cl = client.describe(c, local=ui.verbose)
@@ -1112,6 +1115,10 @@ def incoming(original, ui, repo, source=None, **opts):
                 ui.write(_('summary:     %s\n') % cl.desc.splitlines()[0])
 
         ui.write('\n')
+        limit-=1
+        if limit==0:
+            break
+
     return not changes and 1 or 0
 
 
