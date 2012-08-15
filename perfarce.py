@@ -416,10 +416,23 @@ class p4client(object):
         if self.root:
             c.append('-d')
             c.append(self.root)
-        c.append(cmd)
 
-        for i in range(0, len(files), self.maxargs) or [0]:
-            cs = ' '.join(c + [util.shellquote(f) for f in files[i:i + self.maxargs]])
+        fn = None
+        try:
+            if files and len(files)>self.maxargs:
+                fd, fn = tempfile.mkstemp(prefix='hg-p4-')
+                fp = os.fdopen(fd, 'w')
+                for f in files:
+                    if self.ui.debugflag: self.ui.debug('> -x %s\n' % f)
+                    print >>fp,f
+                fp.close()
+                c.append('-x')
+                c.append(fn)
+                files = []
+
+            c.append(cmd)
+
+            cs = ' '.join(c + [util.shellquote(f) for f in files])
             if self.ui.debugflag: self.ui.debug('> %s\n' % cs)
 
             for d in loaditer(util.popen(cs, mode='rb')):
@@ -433,7 +446,11 @@ class p4client(object):
                     elif code == 'info':
                         self.ui.note('p4: %s\n' % data)
                 yield d
-
+        finally:
+            try:
+                if fn: os.unlink(fn)
+            except Exception:
+                pass
 
     def runs(self, cmd, one=True, **args):
         '''Run a P4 command and return the number of objects returned,
