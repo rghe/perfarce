@@ -242,7 +242,7 @@ class p4client(object):
             if not self.rootpart.endswith('/'):
                 self.rootpart += '/'
 
-    def find(self, rev=None, base=False, p4rev=None):
+    def find(self, rev=None, base=False, p4rev=None, abort=True):
         '''Find the most recent revision which has the p4 extra data which
         gives the p4 changelist it was converted from. If base is True then
         return the most recent child of that revision where the only changes
@@ -298,7 +298,9 @@ class p4client(object):
 
             current = next
 
-        raise util.Abort(_('no p4 changelist revision found'))
+        if abort:
+            raise util.Abort(_('no p4 changelist revision found'))
+        return node.nullid, 0
 
     @propertycache
     def re_type(self): return re.compile('([a-z]+)?(text|binary|symlink|apple|resource|unicode|utf\d+)(\+\w+)?$')
@@ -482,7 +484,7 @@ class p4client(object):
         self.p4stat = set()
         self.p4pending = []
 
-        p4rev, p4id = self.find()
+        p4rev, p4id = self.find(abort=False)
 
         def helper(self,d,p4id):
             c = int(d['change'])
@@ -908,13 +910,10 @@ class p4client(object):
             client.encoding = opts.get('encoding')
 
         if len(repo):
-            p4rev, p4id = client.find(base=True)
+            p4rev, p4id = client.find(base=True, abort=not opts['force'])
         else:
-            p4rev = None
-            if startrev > 0:
-                p4id = startrev
-            else:
-                p4id = 0
+            p4rev, p4id = None, 0
+        p4id = max(p4id, startrev)
 
         if stoprev:
            p4cset = '%s...@%d,@%d' % (client.partial, p4id, stoprev)
@@ -954,7 +953,7 @@ class p4client(object):
         except p4badclient,e:
             raise util.Abort(str(e))
 
-        p4rev, p4id = client.find(base=True)
+        p4rev, p4id = client.find(base=True, abort=not opts['force'])
         ctx1 = repo[p4rev]
         rev = opts.get('rev')
 
@@ -970,7 +969,7 @@ class p4client(object):
         else:
             ctx2 = repo['tip']
 
-        nodes = repo.changelog.nodesbetween([ctx1.node()], [ctx2.node()])[0][1:]
+        nodes = repo.changelog.nodesbetween([ctx1.node()], [ctx2.node()])[0][bool(p4id):]
 
         if not opts['force']:
             # trim off nodes at either end that have already been pushed
