@@ -97,7 +97,7 @@ from mercurial import cmdutil, commands, context, copies, encoding, error, exten
 from mercurial.node import hex, short
 from mercurial.i18n import _
 from mercurial.error import ConfigError
-import marshal, tempfile, os, re, string, sys
+import marshal, os, re, string, sys
 propertycache=util.propertycache
 
 try:
@@ -161,6 +161,30 @@ class p4notclient(util.Abort):
 class p4badclient(util.Abort):
     "Exception raised when a path is an invalid p4 client"
     pass
+
+class TempFile:
+    "Temporary file"
+    def __init__(self, mode):
+        import tempfile
+        fd, self.Name = tempfile.mkstemp(prefix='hg-p4-')
+        if mode:
+            self.File = os.fdopen(fd, mode)
+        else:
+            os.close(fd)
+            self.File = None
+
+    def close(self):
+        if self.File:
+            self.File.close()
+            self.File=None
+
+    def __del__(self):
+        self.close()
+        try:
+            os.unlink(self.Name)
+        except Exception:
+            pass
+
 
 class p4client(object):
 
@@ -405,6 +429,7 @@ class p4client(object):
                 r = 25
         return r
 
+
     def run(self, cmd, files=[], abort=True, client=None):
         'Run a P4 command and yield the objects returned'
 
@@ -419,40 +444,32 @@ class p4client(object):
             c.append('-d')
             c.append(self.root)
 
-        fn = None
-        try:
-            if files and len(files)>self.maxargs:
-                fd, fn = tempfile.mkstemp(prefix='hg-p4-')
-                fp = os.fdopen(fd, 'w')
-                for f in files:
-                    if self.ui.debugflag: self.ui.debug('> -x %s\n' % f)
-                    print >>fp,f
-                fp.close()
-                c.append('-x')
-                c.append(fn)
-                files = []
+        if files and len(files)>self.maxargs:
+            tmp = TempFile('w')
+            for f in files:
+                if self.ui.debugflag: self.ui.debug('> -x %s\n' % f)
+                print >>tmp.File,f
+            tmp.close()
+            c.append('-x')
+            c.append(tmp.Name)
+            files = []
 
-            c.append(cmd)
+        c.append(cmd)
 
-            cs = ' '.join(c + [util.shellquote(f) for f in files])
-            if self.ui.debugflag: self.ui.debug('> %s\n' % cs)
+        cs = ' '.join(c + [util.shellquote(f) for f in files])
+        if self.ui.debugflag: self.ui.debug('> %s\n' % cs)
 
-            for d in loaditer(util.popen(cs, mode='rb')):
-                if self.ui.debugflag: self.ui.debug('< %r\n' % d)
-                code = d.get('code')
-                data = d.get('data')
-                if code is not None and data is not None:
-                    data = data.strip()
-                    if abort and code == 'error':
-                        raise util.Abort('p4: %s' % data)
-                    elif code == 'info':
-                        self.ui.note('p4: %s\n' % data)
-                yield d
-        finally:
-            try:
-                if fn: os.unlink(fn)
-            except Exception:
-                pass
+        for d in loaditer(util.popen(cs, mode='rb')):
+            if self.ui.debugflag: self.ui.debug('< %r\n' % d)
+            code = d.get('code')
+            data = d.get('data')
+            if code is not None and data is not None:
+                data = data.strip()
+                if abort and code == 'error':
+                    raise util.Abort('p4: %s' % data)
+                elif code == 'info':
+                    self.ui.note('p4: %s\n' % data)
+            yield d
 
     def runs(self, cmd, one=True, **args):
         '''Run a P4 command and return the number of objects returned,
@@ -585,32 +602,23 @@ class p4client(object):
         if description is not None:
             changelist['Description'] = self.encode(description)
 
-        fn = None
-        try:
-            # write changelist data to a temporary file
-            fd, fn = tempfile.mkstemp(prefix='hg-p4-')
-            fp = os.fdopen(fd, 'wb')
-            marshal.dump(changelist, fp)
-            fp.close()
+        # write changelist data to a temporary file
+        tmp = TempFile('wb')
+        marshal.dump(changelist, tmp.File)
+        tmp.close()
 
-            # update p4 changelist
-            d = self.runs('change -i%s <%s' % (update and " -u" or "", util.shellquote(fn)))
-            data = d['data']
-            if d['code'] == 'info':
-                if not self.ui.verbose:
-                    self.ui.status('p4: %s\n' % data)
-                if not change:
-                    m = self.re_changeno.match(data)
-                    if m:
-                        change = m.group(1)
-            else:
-                raise util.Abort(_('error creating p4 change: %s') % data)
-
-        finally:
-            try:
-                if fn: os.unlink(fn)
-            except Exception:
-                pass
+        # update p4 changelist
+        d = self.runs('change -i%s <%s' % (update and " -u" or "", util.shellquote(tmp.Name)))
+        data = d['data']
+        if d['code'] == 'info':
+            if not self.ui.verbose:
+                self.ui.status('p4: %s\n' % data)
+            if not change:
+                m = self.re_changeno.match(data)
+                if m:
+                    change = m.group(1)
+        else:
+            raise util.Abort(_('error creating p4 change: %s') % data)
 
         if not change:
             raise util.Abort(_('did not get changelist number from p4'))
@@ -791,9 +799,9 @@ class p4client(object):
             else:
                 cmd = 'print'
                 if utf16:
-                    fd, fn = tempfile.mkstemp(prefix='hg-p4-')
-                    os.close(fd)
-                    cmd += ' -o %s'%util.shellquote(fn)
+                    tmp = TempFile(None)
+                    tmp.close()
+                    cmd += ' -o %s'%util.shellquote(tmp.Name)
                 cmd += ' %s#%d' % (util.shellquote(entry[0]), entry[1])
 
                 contents = []
@@ -803,8 +811,7 @@ class p4client(object):
                         contents.append(d['data'])
 
                 if utf16:
-                    contents = file(fn, 'rb').read()
-                    os.unlink(fn)
+                    contents = file(tmp.Name, 'rb').read()
                 else:
                     contents = ''.join(contents)
 
