@@ -1168,9 +1168,9 @@ def pull(original, ui, repo, source=None, **opts):
                 if startrev:
                     client.sync(c, all=True, force=True)
                 else:
-                    client.runs('revert -k', files=[f[0] for f in files],
-                                abort=False)
-                    client.sync(c, force=True, files=[f[0] for f in files])
+                    client.runs('revert -k', files=[f[0] for f in files], abort=False)
+                    client.sync(c, force=True, files=[f[0] for f in files if f[3]=="R"]+
+                                                     [f[0] for f in files if f[3]!="R"])
 
             nodes, match = client.parsenodes(cl.desc)
             if nodes:
