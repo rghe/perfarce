@@ -227,7 +227,7 @@ class p4client(object):
             else:
                 p = ''
 
-            d = self.runs('client -o %s' % util.shellquote(c), abort=False)
+            d = self.runone('client -o %s' % util.shellquote(c), abort=False)
             if not isinstance(d, dict):
                 raise p4badclient(_('%s is not a valid p4 client') % path)
             code = d.get('code')
@@ -471,17 +471,23 @@ class p4client(object):
                     self.ui.note('p4: %s\n' % data)
             yield d
 
-    def runs(self, cmd, one=True, **args):
-        '''Run a P4 command and return the number of objects returned,
-        or the object itself if exactly one was returned'''
-        count = 0
+    def runs(self, cmd, **args):
+        '''Run a P4 command, discarding any output (except errors)'''
         for d in self.run(cmd, **args):
-            if not count:
+            pass
+
+    def runone(self, cmd, **args):
+        '''Run a P4 command and return the object returned'''
+
+        value=None
+        for d in self.run(cmd, **args):
+            if value is None:
                 value = d
-            count += 1
-        if count == 1 and one:
-            return value
-        return count
+            else:
+                raise util.Abort(_('p4 returned more than one object'))
+        if value is None:
+           raise util.Abort(_('p4 %s returned no objects') % a)
+        return value
 
 
     def getpending(self, node):
@@ -577,7 +583,7 @@ class p4client(object):
                 os.chdir(old)
 
         else:
-            d = self.runs('user -o %s' % util.shellquote(user), abort=False)
+            d = self.runone('user -o %s' % util.shellquote(user), abort=False)
             if 'Update' in d:
                 try:
                     r = '%s <%s>' % (d['FullName'], d['Email'])
@@ -597,7 +603,7 @@ class p4client(object):
         the given description. Returns the changelist number as a string.'''
 
         # get changelist data, and update it
-        changelist = self.runs('change -o %s' % (change or ''))
+        changelist = self.runone('change -o %s' % (change or ''))
 
         if description is not None:
             changelist['Description'] = self.encode(description)
@@ -608,7 +614,7 @@ class p4client(object):
         tmp.close()
 
         # update p4 changelist
-        d = self.runs('change -i%s <%s' % (update and " -u" or "", util.shellquote(tmp.Name)))
+        d = self.runone('change -i%s <%s' % (update and " -u" or "", util.shellquote(tmp.Name)))
         data = d['data']
         if d['code'] == 'info':
             if not self.ui.verbose:
@@ -647,7 +653,7 @@ class p4client(object):
         so when this is used on pending changelists.
         '''
 
-        d = self.runs('describe -s %s' % change)
+        d = self.runone('describe -s %s' % change)
         client = d['client']
         status = d['status']
         r = self.description(change=d['change'],
@@ -880,7 +886,7 @@ class p4client(object):
             v = self.ui.configbool('perfarce', op, None)
             if v is None:
                 self.ui.note(_('checking if p4 %s is supported, set perfarce.%s to skip this test\n') % (op, op))
-                d = self.runs('help %s' % op, abort=False)
+                d = self.runone('help %s' % op, abort=False)
                 v = d['code']=='info'
                 self.ui.debug(_('p4 %s is %ssupported\n') % (op, ["not ",""][v]))
             mc.append(v)
@@ -1271,7 +1277,7 @@ def clone(original, ui, source, dest=None, **opts):
     except p4badclient,e:
         raise util.Abort(str(e))
 
-    d = client.runs('info')
+    d = client.runone('info')
     if not isinstance(d,dict) or d['clientName']=='*unknown*' or "clientRoot" not in d:
         raise util.Abort(_('%s is not a valid p4 client') % source)
 
