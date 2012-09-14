@@ -93,7 +93,7 @@ Five built-in commands are overridden:
            to time (e.g. path/foo and path/FOO are the same object).
 '''
 
-from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, repo, util, url
+from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, util, url
 from mercurial.node import hex, short
 from mercurial.i18n import _
 from mercurial.error import ConfigError
@@ -111,6 +111,14 @@ except (ImportError,AttributeError):
     util_setflags = util.set_flags
     revpair = cmdutil.revpair
 
+try:
+    # Mercurial 2.3
+    from mercurial import peer
+    repository = peer.peerrepository
+except (ImportError,AttributeError):
+    from mercurial import repo
+    repository = repo.repository
+
 def uisetup(ui):
     '''monkeypatch pull and push for p4:// support'''
 
@@ -126,7 +134,7 @@ def uisetup(ui):
 
 # --------------------------------------------------------------------------
 
-class p4repo(repo.repository):
+class p4repo(repository):
     'Dummy repository class so we can use -R for p4submit and p4revert'
     def __init__(self, ui, path):
         self.path = path
@@ -416,10 +424,17 @@ class p4client(object):
                 self.ui.note(_('ignoring hg revision range %s from p4\n' % m.group(1)))
         return nodes, m
 
+    def configint(self, section, name, default=None):
+        'helper for configint which is missing before Mercurial 1.9'
+        try:
+            return self.ui.configint(section, name, default)
+        except AttributeError:
+            return int(self.ui.config(section, name, default))
+
     @propertycache
     def maxargs(self):
         try:
-            r = self.ui.configint('perfarce', 'maxargs', 0)
+            r = self.configint('perfarce', 'maxargs', 0)
         except ConfigError:
             r = 0
         if r<1:
@@ -836,8 +851,8 @@ class p4client(object):
     @propertycache
     def tags(self):
         try:
-            t = self.ui.configint('perfarce', 'tags', -1)
-        except ConfigError,e:
+            t = self.configint('perfarce', 'tags', -1)
+        except (ConfigError,ValueError),e:
             t = -1
         if t<0 or t>2:
             t = self.ui.configbool('perfarce', 'tags', True)

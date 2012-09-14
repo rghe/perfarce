@@ -12,7 +12,7 @@ KEEP=true
 ENCODING=
 UNICODE=0
 
-while getopts "de:k:p:r:su" OPT ; do
+while getopts "de:k:p:r:sux" OPT ; do
    case "$OPT" in
       d)
          DEBUG=1
@@ -34,6 +34,9 @@ while getopts "de:k:p:r:su" OPT ; do
          ;;
       u)
          UNICODE=1
+         ;;
+      x)
+         set -x
          ;;
       \?)
          HELP=1
@@ -432,7 +435,7 @@ if [ $SERVER -ge 2011 ] ; then
 
     echo % move with edit
 
-    $HG move ace1 acm1
+    $HG mv ace1 acm1
     data >>acm1
     $HG ci -m "move+edit with p4 copy"
 
@@ -440,7 +443,7 @@ if [ $SERVER -ge 2011 ] ; then
 
     echo % move/integrate with edit
 
-    $HG move ace2 acm2
+    $HG mv ace2 acm2
     data >>acm2
     $HG ci -m "move+edit e with p4 integ"
 
@@ -669,5 +672,7 @@ $HG pull -u
 
 cmp -s bb/d ../dst3/d
 cmp -s bb/e ../dst3/e
+
+echo % done
 
 # EOF

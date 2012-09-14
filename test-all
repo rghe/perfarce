@@ -1,0 +1,29 @@
+#!/bin/sh
+
+set -e
+
+export HGDIR=$(dirname $PWD)/crew
+mkdir -p logs
+
+OLDPATH=$PATH
+STAT=
+for R in 1.2.1 1.3.1 1.4.3 1.5.4 1.6.4 1.7.5 1.8.4 1.9.3 2.0.2 2.1.2 2.2.3 2.3.1 ; do
+   echo Building Mercurial $R
+   ( cd $HGDIR ; hg up --clean $R ; make clean ; make local ) >logs/$R 2>/dev/null
+   PATH=$HGDIR:$PATH
+   if hg help perfarce | grep "pull from Perforce" ; then
+      echo Running
+      if ./test-push-perforce "$@" >>logs/$R 2>&1 ; then
+         RES=OK
+      else
+         RES="FAIL,RC=$?"
+      fi
+   else
+      RES=NOLOAD
+   fi
+   echo "$R:$RES"
+   STAT="$STAT $R:$RES"
+
+   PATH=$OLDPATH
+done
+echo Results: $STAT
