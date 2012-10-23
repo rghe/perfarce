@@ -457,7 +457,7 @@ class p4client(object):
             c.append(client or self.client)
         if self.root:
             c.append('-d')
-            c.append(self.root)
+            c.append(util.shellquote(self.root))
 
         if files and len(files)>self.maxargs:
             tmp = TempFile('w')
