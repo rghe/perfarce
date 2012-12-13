@@ -501,7 +501,7 @@ class p4client(object):
             else:
                 raise util.Abort(_('p4 returned more than one object'))
         if value is None:
-           raise util.Abort(_('p4 %s returned no objects') % a)
+           raise util.Abort(_('p4 %s returned no objects') % cmd)
         return value
 
 
