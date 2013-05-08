@@ -1,6 +1,6 @@
 # Mercurial extension to push to and pull from Perforce depots.
 #
-# Copyright 2009-12 Frank Kingswood <frank@kingswood-consulting.co.uk>
+# Copyright 2009-13 Frank Kingswood <frank@kingswood-consulting.co.uk>
 #
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2, incorporated herein by reference.
@@ -499,7 +499,7 @@ class p4client(object):
             if value is None:
                 value = d
             else:
-                raise util.Abort(_('p4 returned more than one object'))
+                raise util.Abort(_('p4 %s returned more than one object') % cmd)
         if value is None:
            raise util.Abort(_('p4 %s returned no objects') % cmd)
         return value
@@ -625,7 +625,7 @@ class p4client(object):
 
         # write changelist data to a temporary file
         tmp = TempFile('wb')
-        marshal.dump(changelist, tmp.File)
+        marshal.dump(changelist, tmp.File, 0)
         tmp.close()
 
         # update p4 changelist
@@ -751,7 +751,7 @@ class p4client(object):
 
         if hasattr(self.ui, 'progress'):
             self.ui.progress('p4 fstat', None)
-        self.ui.note('%d files \n' % len(result))
+        self.ui.note(_('%d files \n') % len(result))
 
         return result
 
