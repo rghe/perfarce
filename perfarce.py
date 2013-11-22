@@ -254,8 +254,6 @@ class p4client(object):
             for n in ['Root'] + ['AltRoots%d' % i for i in range(9)]:
                 if n in d and isdir(d[n]):
                     self.root = util.pconvert(d[n])
-                    if self.root.endswith('/'):
-                        self.root = self.root[:-1]
                     break
             if not self.root:
                 ui.note(_('the p4 client root must exist\n'))
@@ -273,6 +271,8 @@ class p4client(object):
             self.rootpart = util.pconvert(p)
             if not self.rootpart.endswith('/'):
                 self.rootpart += '/'
+            if self.root.endswith('/'):
+                self.root = self.root[:-1]
 
     def find(self, rev=None, base=False, p4rev=None, abort=True):
         '''Find the most recent revision which has the p4 extra data which
