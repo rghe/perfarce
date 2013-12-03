@@ -93,7 +93,7 @@ Five built-in commands are overridden:
            to time (e.g. path/foo and path/FOO are the same object).
 '''
 
-from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, util, url
+from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, phases, util, url
 from mercurial.node import hex, short
 from mercurial.i18n import _
 from mercurial.error import ConfigError
@@ -1247,6 +1247,8 @@ def pull(original, ui, repo, source=None, **opts):
 
             for l in client.labels(c):
                 tags[l] = (c, ctx.hex())
+
+            repo.pushkey('phases', ctx.hex(), str(phases.draft), str(phases.public))
 
             ui.note(_('added changeset %d:%s\n') % (ctx.rev(), ctx))
 
