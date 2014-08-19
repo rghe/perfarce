@@ -1160,13 +1160,20 @@ def pull(original, ui, repo, source=None, **opts):
     entries = {}
     c = 0
 
+    def memfilectx(context, repo, path, data, islink, isexec):
+        'wrapper to handle 3.1 vs older differences'
+        try:
+            return context.memfilectx(repo=repo, path=path, data=data, islink=islink, isexec=isexec)
+        except TypeError:
+            return context.memfilectx(path=path, data=data, islink=islink, isexec=isexec, copied=None)
+
     def getfilectx(repo, memctx, fn):
         'callback to read file data'
         if fn.startswith('.hg'):
             return repo[parent].filectx(fn)
 
         mode, contents = client.getfile(entries[fn])
-        return context.memfilectx(fn, contents, 'l' in mode, 'x' in mode, None)
+        return memfilectx(context, repo, fn, contents, 'l' in mode, 'x' in mode)
 
     # for clone we support a --startrev option to fold initial changelists
     if startrev:
@@ -1271,7 +1278,7 @@ def pull(original, ui, repo, source=None, **opts):
             def getfilectx(repo, memctx, fn):
                 'callback to read file data'
                 assert fn=='.hgtags'
-                return context.memfilectx(fn, ''.join(tagdata), False, False, None)
+                return memfilectx(context, repo, fn, ''.join(tagdata), False, False)
 
             ctx = context.memctx(repo, (p4rev, None), '\n'.join(desc),
                                  ['.hgtags'], getfilectx)
