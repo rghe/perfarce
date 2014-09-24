@@ -125,6 +125,7 @@ def uisetup(ui):
     extensions.wrapcommand(commands.table, 'pull', pull)
     p = extensions.wrapcommand(commands.table, 'push', push)
     p[1].append(('', 'submit', None, 'for p4:// destination submit new changelist to server'))
+    p[1].append(('', 'job', [], 'for p4:// destination set job id(s)'))
     extensions.wrapcommand(commands.table, 'incoming', incoming)
     extensions.wrapcommand(commands.table, 'outgoing', outgoing)
     p = extensions.wrapcommand(commands.table, 'clone', clone)
@@ -613,12 +614,16 @@ class p4client(object):
     @propertycache
     def re_changeno(self): return re.compile('Change ([0-9]+) created.+')
 
-    def change(self, change=None, description=None, update=False):
+    def change(self, change=None, description=None, update=False, jobs=None):
         '''Create a new p4 changelist or update an existing changelist with
         the given description. Returns the changelist number as a string.'''
 
         # get changelist data, and update it
         changelist = self.runone('change -o %s' % (change or ''))
+
+        if jobs:
+            for i,j in enumerate(jobs):
+                changelist['Jobs%d'%i] = self.encode(j)
 
         if description is not None:
             changelist['Description'] = self.encode(description)
@@ -1475,7 +1480,7 @@ def push(original, ui, repo, dest=None, **opts):
         ui.debug('integrate = %r\n' % (ntg,))
 
     # create new changelist
-    use = client.change(use, desc)
+    use = client.change(use, desc, jobs=opts['job'])
 
     def modal(note, cmd, files, encoder):
         'Run command grouped by file mode'
