@@ -656,7 +656,7 @@ class p4client(object):
             self.__dict__.update(args)
 
 
-    actions = { 'edit':'M', 'add':'A', 'move/add':'A', 'delete':'R', 'move/delete':'R', 'purge':'R', 'branch':'A', 'integrate':'M' }
+    actions = { 'edit':'M', 'add':'A', 'move/add':'A', 'delete':'R', 'move/delete':'R', 'purge':'R', 'branch':'A', 'integrate':'M', 'import':'A' }
 
     def describe(self, change, local=None):
         '''Return p4 changelist description object with user name and date.
