@@ -933,6 +933,7 @@ class p4client(object):
             if ui.traceback:ui.traceback()
             return True, original(ui, repo, *(source and [source] or []), **opts)
         except p4badclient,e:
+            if ui.traceback:ui.traceback()
             raise util.Abort(str(e))
 
         # if present, --rev will be the last Perforce changeset number to get
@@ -1587,6 +1588,7 @@ def subrevcommon(mode, ui, repo, *changes, **opts):
         try:
             changes = [int(c) for c in changes]
         except ValueError:
+            if ui.traceback:ui.traceback()
             raise util.Abort(_('changelist must be a number'))
     elif opts['all']:
         changes = [e[0] for e in client.getpendinglist() if not e[1]]
