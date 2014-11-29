@@ -1524,7 +1524,7 @@ def push(original, ui, repo, dest=None, **opts):
         if copies:
             ui.note(_('copying: %s\n') % ' '.join(f[1] for f in copies))
             for f in copies:
-                client.runs('copy -c %s %s %s' % (use, f[0], f[1]))
+                client.runs('copy -c %s %s %s' % (use, client.rootpart + f[0], client.rootpart + f[1]))
 
         if moves:
             modal(_('opening for move: %s\n'), 'edit -c %s' % use,
@@ -1532,12 +1532,14 @@ def push(original, ui, repo, dest=None, **opts):
 
             ui.note(_('moving: %s\n') % ' '.join(f[1] for f in moves))
             for f in moves:
-                client.runs('move -c %s %s %s' % (use, f[0], f[1]))
+                client.runs('move -c %s %s %s' % (
+                    use, client.rootpart + client.encodename(f[0]),
+                    client.rootpart + client.encodename(f[1])))
 
         if ntg:
             ui.note(_('opening for integrate: %s\n') % ' '.join(f[1] for f in ntg))
             for f in ntg:
-                client.runs('integrate -c %s -t %s %s' % (use, f[0], f[1]))
+                client.runs('integrate -c %s -t %s %s' % (use, client.rootpart + f[0], f[1]))
 
         if mod or mod2:
             modal(_('opening for edit: %s\n'), 'edit -c %s' % use, mod + mod2, client.encodename)
