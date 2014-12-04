@@ -659,9 +659,14 @@ class p4client(object):
         'Changelist description'
         def __init__(self, **args):
             self.__dict__.update(args)
+        def __repr__(self):
+            return "%s(%s)"%(self.__class__.__name__,
+                       ", ".join("%s=%r"%(k,getattr(self,k)) for k in sorted(self.__dict__.keys())))
 
-
-    actions = { 'edit':'M', 'add':'A', 'move/add':'A', 'delete':'R', 'move/delete':'R', 'purge':'R', 'branch':'A', 'integrate':'M', 'import':'A' }
+    actions = { 'add':'A', 'branch':'A', 'move/add':'A',
+                'edit':'M', 'integrate':'M', 'import':'A',
+                'delete':'R', 'move/delete':'R', 'purge':'R',
+              }
 
     def describe(self, change, local=None):
         '''Return p4 changelist description object with user name and date.
