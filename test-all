@@ -2,14 +2,27 @@
 
 set -e
 
-export HGDIR=$(dirname $PWD)/crew
+export HGDIR=$(dirname $PWD)/mercurial
 mkdir -p logs
+
+HGRCPATH=$PWD/logs/.hgrc
+export HGRCPATH
+
+cat <<EOF >$HGRCPATH
+[extensions]
+perfarce=$PWD/perfarce.py
+EOF
 
 OLDPATH=$PATH
 STAT=
-for R in 1.2.1 1.3.1 1.4.3 1.5.4 1.6.4 1.7.5 1.8.4 1.9.3 2.0.2 2.1.2 2.2.3 2.3.1 ; do
+
+# No longer compatible with these versions of Mercurial:
+# 1.2.1 1.3.1 1.4.3 1.5.4 1.6.4 1.7.5 1.8.4 1.9.3 2.0.2 2.1.2 2.2.3
+
+for R in 2.3.2 2.4.2 2.5.4 2.6.3 2.7.2 2.8.2 2.9.2 \
+         3.0.2 3.1.2 3.2.4 3.3.3 3.4.2 3.5.2 3.6.3 3.7.3 3.8.1 ; do
    echo Building Mercurial $R
-   ( cd $HGDIR ; hg up --clean $R ; make clean ; make local ) >logs/$R 2>/dev/null
+   ( cd $HGDIR ; hg up --clean $R ; make clean ; make local ) >logs/$R 2>&1
    PATH=$HGDIR:$PATH
    if hg help perfarce | grep "pull from Perforce" ; then
       echo Running
@@ -27,3 +40,4 @@ for R in 1.2.1 1.3.1 1.4.3 1.5.4 1.6.4 1.7.5 1.8.4 1.9.3 2.0.2 2.1.2 2.2.3 2.3.1
    PATH=$OLDPATH
 done
 echo Results: $STAT
+

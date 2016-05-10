@@ -93,31 +93,15 @@ Five built-in commands are overridden:
            to time (e.g. path/foo and path/FOO are the same object).
 '''
 
-from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, phases, util, url
+from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, peer, phases, scmutil, util, url
 from mercurial.node import hex, short
 from mercurial.i18n import _
 from mercurial.error import ConfigError
 import marshal, os, re, string, sys
 propertycache=util.propertycache
 
-try:
-    # Mercurial 1.9
-    from mercurial import scmutil
-    util_opener = scmutil.opener
-    util_setflags = util.setflags
-    revpair = scmutil.revpair
-except (ImportError,AttributeError):
-    util_opener = util.opener
-    util_setflags = util.set_flags
-    revpair = cmdutil.revpair
-
-try:
-    # Mercurial 2.3
-    from mercurial import peer
-    repository = peer.peerrepository
-except (ImportError,AttributeError):
-    from mercurial import repo
-    repository = repo.repository
+cmdtable = {}
+command = cmdutil.command(cmdtable)
 
 def uisetup(ui):
     '''monkeypatch pull and push for p4:// support'''
@@ -135,7 +119,7 @@ def uisetup(ui):
 
 # --------------------------------------------------------------------------
 
-class p4repo(repository):
+class p4repo(peer.peerrepository):
     'Dummy repository class so we can use -R for p4submit and p4revert'
     def __init__(self, ui, path):
         self.path = path
@@ -222,6 +206,11 @@ class p4client(object):
         self.usercache = {}
         self.p4stat = None
         self.p4pending = None
+
+        if tuple(util.version().split(".",3)) < ("3","2"):
+            self.getfile_none=self.getfile_none_ioerr
+        else:
+            self.getfile_none=self.getfile_none_none
 
         s, c = path[5:].split('/', 1)
         if ':' not in s:
@@ -725,9 +714,8 @@ class p4client(object):
         return r
 
 
-    def fstat(self, change, all=False):
-        '''Find local names for all the files belonging to a
-        changelist.
+    def fstat(self, change=None, all=False, files=[]):
+        '''Find local names for all the files belonging to a changelist.
         Returns a list of tuples
             (depotname, revision, type, action, localname)
         with only entries for files that appear in the workspace.
@@ -736,17 +724,19 @@ class p4client(object):
         '''
         result = []
 
-        if all:
+        if files:
+            p4cmd = 'fstat'
+        elif all:
             p4cmd = 'fstat %s' % util.shellquote('%s...@%d' % (self.partial, change))
         else:
             p4cmd = 'fstat -e %d %s' % (change, util.shellquote('%s...' % self.partial))
 
-        for d in self.run(p4cmd):
+        for d in self.run(p4cmd, files=files):
             if len(result) % 250 == 0:
                 if hasattr(self.ui, 'progress'):
                     self.ui.progress('p4 fstat', len(result), unit='entries')
                 else:
-                    self.ui.note('%d files\r' % len(result))
+                    self.ui.note(_('%d files\r') % len(result))
                     self.ui.flush()
 
             if 'desc' in d or d['clientFile'].startswith('.hg'):
@@ -800,18 +790,25 @@ class p4client(object):
         if files and n < len(files):
             raise util.Abort(_('incomplete reply from p4, reduce maxargs'))
 
+    def getfile_none_ioerr(self, entry):
+        "Mercurial up to 3.1 uses IOError to signal removed files"
+        self.ui.debug('getfile ioerror on %r\n'%(entry,))
+        raise IOError()
+
+    def getfile_none_none(self, entry):
+        "Mercurial from 3.2 uses None,None to signal removed files"
+        return None, None
 
     def getfile(self, entry):
         '''Return contents of a file in the p4 depot at the given revision number.
         Entry is a tuple
             (depotname, revision, type, action, localname)
         If self.keep is set, assumes that the client is in sync.
-        Raises IOError if the file is deleted.
+        Raises IOError or returns None,None if the file is deleted (depending on version).
         '''
 
         if entry[3] == 'R':
-            self.ui.debug('getfile ioerror on %r\n'%(entry,))
-            raise IOError()
+            return self.getfile_none(entry)
 
         try:
             basetype, mode, keywords, utf16 = self.decodetype(entry[2])
@@ -997,7 +994,7 @@ class p4client(object):
         rev = opts.get('rev')
 
         if rev:
-            n1, n2 = revpair(repo, rev)
+            n1, n2 = scmutil.revpair(repo, rev)
             if n2:
                 ctx1 = repo[n1]
                 ctx1 = ctx1.parents()[0]
@@ -1184,6 +1181,8 @@ def pull(original, ui, repo, source=None, **opts):
             return repo[parent].filectx(fn)
 
         mode, contents = client.getfile(entries[fn])
+        if contents is None:
+            return None
         return memfilectx(context, repo, fn, contents, 'l' in mode, 'x' in mode)
 
     # for clone we support a --startrev option to fold initial changelists
@@ -1378,6 +1377,88 @@ def clone(original, ui, source, dest=None, **opts):
 
 # --------------------------------------------------------------------------
 
+@command("p4unshelve",
+         [  ],
+         'hg unshelve changelist...')
+def unshelve(ui, repo, changelist, **opts):
+    '''Take shelved files and bring into current workspace.
+    This is broken: shelved files are not diffed and merged properly.'''
+
+    source = ui.expandpath('default')
+    try:
+        client = p4client(ui, repo, source)
+    except p4notclient as e:
+        if ui.traceback:ui.traceback()
+        raise util.Abort(str(e))
+    except p4badclient as e:
+        raise util.Abort(str(e))
+
+    depot=[]
+    p4cmd = 'unshelve -f -s %s' % changelist
+    for d in client.run(p4cmd):
+        if d["code"] == "stat":
+            df = d["depotFile"]
+            depot.append(df)
+
+    if ui.debugflag:
+        ui.debug('depot = %r\n' % (depot,))
+
+    if not depot:
+        ui.status(_('no files unshelved'))
+        return 2
+
+    client.runs("sync", files=depot, abort=False)
+    client.runs("resolve -af", files=depot, abort=False)
+    wctx = repo[None]
+
+    try:
+        files=[]
+        for d in client.run("fstat", files=depot):
+            if d["code"] == "stat":
+                lf = client.repopath(d['clientFile'])
+                df = d['depotFile']
+                try:
+                    rv = int(d['headRev'])
+                    tp = d['headType']
+                    ac = client.actions[d['headAction']]
+                except (KeyError,ValueError):
+                    rv = 0
+                    tp = ''
+                    ac = 'A'
+                files.append((df, rv, tp, ac, lf))
+
+        if ui.debugflag:
+            ui.debug('files = %r\n' % (files,))
+
+        ui.note(_('retrieving file contents...\n'))
+        opener = repo.wopener
+        for e in files:
+            name = e[4]
+            mode, contents = client.getfile(e)
+            if contents is None:
+                # delete local file if it exists
+                ui.debug(_('unlink: %s\n') % name)
+                opener.unlink(name)
+            else:
+                ui.debug(_('writing: %s\n') % name)
+                if 'l' in mode:
+                    opener.symlink(contents, name)
+                else:
+                    fp = opener(name, mode="w")
+                    fp.write(contents)
+                    fp.close()
+                scmutil.setflags(client.localpath(name), 'l' in mode, 'x' in mode)
+
+        wctx.add((e[4] for e in files), "")
+    finally:
+        client.runs("revert", files=depot)
+
+    ui.status(_('%d files unshelved\n') % len(files))
+    return
+
+
+# --------------------------------------------------------------------------
+
 def outgoing(original, ui, repo, dest=None, **opts):
     '''Wrap the outgoing command to look for p4 paths, report changes
     Returns 0 if there are outgoing changes, 1 otherwise.
@@ -1528,7 +1609,7 @@ def push(original, ui, repo, dest=None, **opts):
 
         if moves:
             modal(_('opening for move: %s\n'), 'edit -c %s' % use,
-                  [(f[0],f[2]) for f in moves], client.encodename)
+                  [(client.rootpart + f[0], f[2]) for f in moves], client.encodename)
 
             ui.note(_('moving: %s\n') % ' '.join(f[1] for f in moves))
             for f in moves:
@@ -1539,14 +1620,20 @@ def push(original, ui, repo, dest=None, **opts):
         if ntg:
             ui.note(_('opening for integrate: %s\n') % ' '.join(f[1] for f in ntg))
             for f in ntg:
-                client.runs('integrate -c %s -t %s %s' % (use, client.rootpart + f[0], f[1]))
+                f1 = client.rootpart + f[1]
+                ui.debug(_('unlink: %s\n') % f1)
+                try:
+                    os.unlink(f1)
+                except Exception:
+                    pass
+                client.runs('integrate -c %s -Di -t %s %s' % (use, client.rootpart + f[0], f1))
 
         if mod or mod2:
             modal(_('opening for edit: %s\n'), 'edit -c %s' % use, mod + mod2, client.encodename)
 
         if mod or add or mod2:
             ui.note(_('retrieving file contents...\n'))
-            opener = util_opener(client.rootpart)
+            opener = scmutil.opener(client.rootpart)
 
             for name, mode in mod + add + mod2:
                 ui.debug(_('writing: %s\n') % name)
@@ -1556,7 +1643,7 @@ def push(original, ui, repo, dest=None, **opts):
                     fp = opener(name, mode="w")
                     fp.write(ctx[name].data())
                     fp.close()
-                util_setflags(client.localpath(name), 'l' in mode, 'x' in mode)
+                util.setflags(client.localpath(name), 'l' in mode, 'x' in mode)
 
         if add:
             modal(_('opening for add: %s\n'), 'add -f -c %s' % use, add, lambda n:n)
@@ -1566,12 +1653,17 @@ def push(original, ui, repo, dest=None, **opts):
 
         # submit the changelist to p4 if --submit was given
         if opts['submit'] or ui.configbool('perfarce', 'submit', default=False):
+            if ntg:
+                client.runs('resolve -f -c %s -ay ...' % use, abort=False)
             client.submit(use)
         else:
             ui.note(_('pending changelist %s\n') % use)
 
     except Exception:
-        revert(ui, repo, use, **opts)
+        if ui.debugflag:
+            ui.note(_('not reverting changelist %s\n') % use)
+        else:
+            revert(ui, repo, use, **opts)
         raise
 
 
@@ -1602,6 +1694,9 @@ def subrevcommon(mode, ui, repo, *changes, **opts):
     return client, changes
 
 
+@command("p4submit",
+         [ ('a', 'all', None, _('submit all changelists listed by p4pending')) ],
+         'hg p4submit [-a] changelist...')
 def submit(ui, repo, *changes, **opts):
     'submit one or more changelists to the p4 depot.'
 
@@ -1613,6 +1708,9 @@ def submit(ui, repo, *changes, **opts):
         client.submit(c)
 
 
+@command("p4revert",
+         [ ('a', 'all', None, _('revert all changelists listed by p4pending')) ],
+         'hg p4revert [-a] changelist...')
 def revert(ui, repo, *changes, **opts):
     'revert one or more pending changelists and all opened files.'
 
@@ -1642,6 +1740,9 @@ def revert(ui, repo, *changes, **opts):
             client.runs('change -d %d' %c , client=cl.client, abort=False)
 
 
+@command("p4pending",
+         [ ('s', 'summary', None, _('print p4 changelist summary')) ],
+            'hg p4pending [-s] [p4://server/client]')
 def pending(ui, repo, dest=None, **opts):
     'report changelists already pushed and pending for submit in p4'
 
@@ -1679,6 +1780,15 @@ def pending(ui, repo, dest=None, **opts):
                 ui.write("%s\n" % ' '.join(output))
 
 
+@command("p4identify",
+         [ ('b', 'base', None, _('show base revision for new incoming changes')),
+           ('c', 'changelist', 0, _('identify the specified p4 changelist')),
+           ('i', 'id',   None, _('show global revision id')),
+           ('n', 'num',  None, _('show local revision number')),
+           ('p', 'p4',   None, _('show p4 revision number')),
+           ('r', 'rev',  '',   _('identify the specified revision')),
+         ],
+         'hg p4identify [-binp] [-r REV]')
 def identify(ui, repo, *args, **opts):
     '''show p4 and hg revisions for the most recent p4 changelist
 
@@ -1720,30 +1830,3 @@ def identify(ui, repo, *args, **opts):
 
     ui.write("%s\n" % ' '.join(output))
 
-
-cmdtable = {
-    # 'command-name': (function-call, options-list, help-string)
-    'p4pending':
-        (   pending,
-            [ ('s', 'summary', None, _('print p4 changelist summary')) ],
-            'hg p4pending [-s] [p4://server/client]'),
-    'p4revert':
-        (   revert,
-            [ ('a', 'all', None, _('revert all changelists listed by p4pending')) ],
-            'hg p4revert [-a] changelist...'),
-    'p4submit':
-        (   submit,
-            [ ('a', 'all', None, _('submit all changelists listed by p4pending')) ],
-            'hg p4submit [-a] changelist...'),
-    'p4identify':
-        (   identify,
-            [ ('b', 'base', None, _('show base revision for new incoming changes')),
-              ('c', 'changelist', 0, _('identify the specified p4 changelist')),
-              ('i', 'id',   None, _('show global revision id')),
-              ('n', 'num',  None, _('show local revision number')),
-              ('p', 'p4',   None, _('show p4 revision number')),
-              ('r', 'rev',  '',   _('identify the specified revision')),
-            ],
-            'hg p4identify [-binp] [-r REV]'
-        )
-}
