@@ -1,6 +1,6 @@
 # Mercurial extension to push to and pull from Perforce depots.
 #
-# Copyright 2009-13 Frank Kingswood <frank@kingswood-consulting.co.uk>
+# Copyright 2009-16 Frank Kingswood <frank@kingswood-consulting.co.uk>
 #
 # This software may be used and distributed according to the terms of the
 # GNU General Public License version 2, incorporated herein by reference.
@@ -207,7 +207,7 @@ class p4client(object):
         self.p4stat = None
         self.p4pending = None
 
-        if tuple(util.version().split(".",3)) < ("3","2"):
+        if tuple(util.version().split(".",2)) < ("3","2"):
             self.getfile_none=self.getfile_none_ioerr
         else:
             self.getfile_none=self.getfile_none_none
