@@ -97,6 +97,10 @@ from mercurial import cmdutil, commands, context, copies, encoding, error, exten
 from mercurial.node import hex, short
 from mercurial.i18n import _
 from mercurial.error import ConfigError
+try:
+   from mercurial import registrar
+except ImportError:
+   registrar=None
 import marshal, os, re, string, sys
 propertycache=util.propertycache
 
@@ -657,7 +661,7 @@ class p4client(object):
                 'delete':'R', 'move/delete':'R', 'purge':'R',
               }
 
-    def describe(self, change, local=None):
+    def describe(self, change, local=None, shelve=False):
         '''Return p4 changelist description object with user name and date.
         If the local is true, then also collect a list of 5-tuples
             (depotname, revision, type, action, localname)
@@ -667,7 +671,7 @@ class p4client(object):
         so when this is used on pending changelists.
         '''
 
-        d = self.runone('describe -s %s' % change)
+        d = self.runone('describe -%s %s' % ("S" if shelve else "s", change))
         client = d['client']
         status = d['status']
         r = self.description(change=d['change'],
@@ -701,9 +705,7 @@ class p4client(object):
             jn = 'job%d' % i
             if jn not in d:
                 break
-            jn = d[jn]
-            js = d['jobstat%d' % i]
-            r.jobs.append((jn, js))
+            r.jobs.append(d[jn])
             i += 1
 
         if local and files:
@@ -1138,6 +1140,8 @@ def incoming(original, ui, repo, source=None, **opts):
         # ui.write(_('parent:      %d:%s\n') % parent)
         ui.write(_('user:        %s\n') % cl.user)
         ui.write(_('date:        %s\n') % util.datestr(cl.date))
+        if cl.jobs:
+            ui.write(_('jobs:        %s\n') % ' '.join(cl.jobs))
         if ui.verbose:
             ui.write(_('files:       %s\n') % ' '.join(f[4] for f in cl.files))
 
@@ -1238,6 +1242,9 @@ def pull(original, ui, repo, source=None, **opts):
                 startrev = None
             else:
                 extra = {'p4':c}
+
+            if cl.jobs:
+                extra['p4jobs'] = " ".join(cl.jobs)
 
             entries.clear()
             if client.ignorecase:
@@ -1447,7 +1454,7 @@ def unshelve(ui, repo, changelist, **opts):
                     fp = opener(name, mode="w")
                     fp.write(contents)
                     fp.close()
-                scmutil.setflags(client.localpath(name), 'l' in mode, 'x' in mode)
+                util.setflags(client.localpath(name), 'l' in mode, 'x' in mode)
 
         wctx.add((e[4] for e in files), "")
     finally:
@@ -1731,10 +1738,9 @@ def revert(ui, repo, *changes, **opts):
                 ui.note(_('reverting: %s\n') % ' '.join(files))
                 client.runs('revert', client=cl.client, files=files, abort=False)
 
-            jobs = [j[0] for j in cl.jobs]
-            if jobs:
-                ui.note(_('unfixing: %s\n') % ' '.join(jobs))
-                client.runs('fix -d -c %d' % c, client=cl.client, files=jobs, abort=False)
+            if cl.jobs:
+                ui.note(_('unfixing: %s\n') % ' '.join(cl.jobs))
+                client.runs('fix -d -c %d' % c, client=cl.client, files=cl.jobs, abort=False)
 
             ui.note(_('deleting: %d\n') % c)
             client.runs('change -d %d' %c , client=cl.client, abort=False)
@@ -1829,4 +1835,18 @@ def identify(ui, repo, *args, **opts):
         output.append(hexfunc(ctx.node()))
 
     ui.write("%s\n" % ' '.join(output))
+
+if registrar is not None:
+    keywords = {}
+    templatekeyword = registrar.templatekeyword(keywords)
+
+    @templatekeyword('p4')
+    def showp4cl(repo, ctx, templ, **args):
+        """String. p4 changelist number."""
+        return ctx.extra().get("p4")
+
+    @templatekeyword('p4jobs')
+    def showp4jobs(repo, ctx, templ, **args):
+        """String. A list of p4 jobs."""
+        return ctx.extra().get("p4jobs")
 
