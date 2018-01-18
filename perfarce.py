@@ -101,6 +101,10 @@ try:
    from mercurial import registrar
 except ImportError:
    registrar=None
+try:
+    from mercurial.peer import peerrepository
+except ImportError:
+    from mercurial.repo import repository as peerrepository
 import marshal, os, re, string, sys
 propertycache=util.propertycache
 
@@ -123,7 +127,7 @@ def uisetup(ui):
 
 # --------------------------------------------------------------------------
 
-class p4repo(peer.peerrepository):
+class p4repo(peerrepository):
     'Dummy repository class so we can use -R for p4submit and p4revert'
     def __init__(self, ui, path):
         self.path = path
