@@ -1184,6 +1184,11 @@ def pull(original, ui, repo, source=None, **opts):
         if fn.startswith('.hg'):
             return repo[parent].filectx(fn)
 
+        if entries[fn][3] == 'R' and getattr(memctx, '_returnnoneformissingfiles', False):
+            # from 3.1 onvards, ctx expects None for deleted files
+            client.ui.debug('removed file %r\n'%(entries[fn],))
+            return None
+
         mode, contents = client.getfile(entries[fn])
         if contents is None:
             return None
