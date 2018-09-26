@@ -1370,7 +1370,7 @@ def clone(original, ui, source, dest=None, **opts):
     try:
         r = pull(None, ui, repo, source=source, **opts)
     finally:
-        fp = repo.opener("hgrc", "w", text=True)
+        fp = repo.vfs("hgrc", "w", text=True)
         fp.write("[paths]\n")
         fp.write("default = %s\n" % source)
         fp.write("\n[perfarce]\n")
@@ -1450,7 +1450,7 @@ def unshelve(ui, repo, changelist, **opts):
             ui.debug('files = %r\n' % (files,))
 
         ui.note(_('retrieving file contents...\n'))
-        opener = repo.wopener
+        opener = repo.vfs
         for e in files:
             name = e[4]
             mode, contents = client.getfile(e)
@@ -1652,7 +1652,7 @@ def push(original, ui, repo, dest=None, **opts):
 
         if mod or add or mod2:
             ui.note(_('retrieving file contents...\n'))
-            opener = scmutil.opener(client.rootpart)
+            opener = scmutil.vfs.vfs(client.rootpart)
 
             for name, mode in mod + add + mod2:
                 ui.debug(_('writing: %s\n') % name)
