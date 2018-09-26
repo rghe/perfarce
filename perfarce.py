@@ -1182,7 +1182,7 @@ def pull(original, ui, repo, source=None, **opts):
     def memfilectx(context, repo, path, data, islink, isexec):
         'wrapper to handle 3.1 vs older differences'
         try:
-            return context.memfilectx(repo=repo, path=path, data=data, islink=islink, isexec=isexec)
+            return context.memfilectx(changectx=None, repo=repo, path=path, data=data, islink=islink, isexec=isexec)
         except TypeError:
             return context.memfilectx(path=path, data=data, islink=islink, isexec=isexec, copied=None)
 
