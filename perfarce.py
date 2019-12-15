@@ -1370,7 +1370,11 @@ def clone(original, ui, source, dest=None, **opts):
     try:
         r = pull(None, ui, repo, source=source, **opts)
     finally:
-        fp = repo.vfs("hgrc", "w", text=True)
+        try:
+            fp = repo.vfs("hgrc", "w", text=True)
+        except TypeError:
+            # Mercurial 4.5
+            fp = repo.vfs("hgrc", "w")
         fp.write("[paths]\n")
         fp.write("default = %s\n" % source)
         fp.write("\n[perfarce]\n")
