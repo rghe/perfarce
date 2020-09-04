@@ -112,7 +112,10 @@ import marshal, os, re, string, sys
 propertycache=util.propertycache
 
 cmdtable = {}
-command = cmdutil.command(cmdtable)
+if registrar is not None:
+    command = registrar.command(cmdtable)
+else:
+    command = cmdutil.command(cmdtable)
 
 def uisetup(ui):
     '''monkeypatch pull and push for p4:// support'''
