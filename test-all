@@ -3,6 +3,12 @@
 set -e
 
 export HGDIR=$(dirname $PWD)/mercurial
+if [ ! -d "$HGDIR" ] ; then
+  echo "Directory $HGDIR should have the Mercurial repository code"
+  echo "Clone Mercurial from by running:"
+  echo "    hg clone https://www.mercurial-scm.org/repo/hg $HGDIR"
+  exit 1
+fi
 mkdir -p logs
 
 HGRCPATH=$PWD/logs/.hgrc
