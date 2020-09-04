@@ -22,11 +22,9 @@ EOF
 OLDPATH=$PATH
 STAT=
 
-# No longer compatible with these versions of Mercurial:
-# 1.2.1 1.3.1 1.4.3 1.5.4 1.6.4 1.7.5 1.8.4 1.9.3 2.0.2 2.1.2 2.2.3
+# No longer compatible with versions of Mercurial prior to 4.5
 
-for R in 2.3.2 2.4.2 2.5.4 2.6.3 2.7.2 2.8.2 2.9.2 \
-         3.0.2 3.1.2 3.2.4 3.3.3 3.4.2 3.5.2 3.6.3 3.7.3 3.8.1 ; do
+for R in 4.5 4.5.1 4.5.2 4.5.3 ; do
    echo Building Mercurial $R
    ( cd $HGDIR ; hg up --clean $R ; make clean ; make local ) >logs/$R 2>&1
    PATH=$HGDIR:$PATH
