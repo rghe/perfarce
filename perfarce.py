@@ -102,12 +102,15 @@ try:
 except ImportError:
    registrar=None
 try:
-    from mercurial.repository import peer as peerrepository
+    from mercurial.interfaces.repository import peer as peerrepository
 except ImportError:
     try:
-        from mercurial.repo import repository as peerrepository
+        from mercurial.repository import peer as peerrepository
     except ImportError:
-        from mercurial.peer import peerrepository
+        try:
+            from mercurial.repo import repository as peerrepository
+        except ImportError:
+            from mercurial.peer import peerrepository
 import marshal, os, re, string, sys
 propertycache=util.propertycache
 
