@@ -120,6 +120,15 @@ if registrar is not None:
 else:
     command = cmdutil.command(cmdtable)
 
+if tuple(util.version().split(".",2)) < ("4","6"):
+    def revpairnodes(repo, rev):
+        return scmutil.revpair(repo, rev)
+else:
+    # Mercurial 4.6: revpair started returning ctx objects instead of node
+    def revpairnodes(repo, rev):
+        ctx1, ctx2 = scmutil.revpair(repo, rev)
+        return ctx1.node(), ctx2.node()
+
 def uisetup(ui):
     '''monkeypatch pull and push for p4:// support'''
 
@@ -1009,7 +1018,7 @@ class p4client(object):
         rev = opts.get('rev')
 
         if rev:
-            n1, n2 = scmutil.revpair(repo, rev)
+            n1, n2 = revpairnodes(repo, rev)
             if n2:
                 ctx1 = repo[n1]
                 ctx1 = ctx1.parents()[0]
