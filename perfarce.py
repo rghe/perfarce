@@ -1086,7 +1086,7 @@ class p4client(object):
             mod = add = rem = []
             cpy = {}
         else:
-            mod, add, rem = repo.status(node1=ctx1.node(), node2=ctx2.node())[:3]
+            mod, add, rem = tuple(repo.status(node1=ctx1.node(), node2=ctx2.node()))[:3]
             mod = [(f, ctx2.flags(f)) for f in mod]
             add = [(f, ctx2.flags(f)) for f in add]
             rem = [(f, "") for f in rem]
