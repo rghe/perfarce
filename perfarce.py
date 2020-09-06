@@ -114,6 +114,22 @@ except ImportError:
 import marshal, os, re, string, sys
 propertycache=util.propertycache
 
+try:
+    from mercurial.utils.procutil import shellquote
+except ImportError:
+    from mercurial.util import shellquote
+
+try:
+    from mercurial.utils.dateutil import datestr
+except ImportError:
+    from mercurial.util import datestr
+
+try:
+    from mercurial.scmutil import revsymbol
+except ImportError:
+    def revsymbol(repo, symbol):
+        return symbol
+
 cmdtable = {}
 if registrar is not None:
     command = registrar.command(cmdtable)
@@ -251,7 +267,7 @@ class p4client(object):
             else:
                 p = ''
 
-            d = self.runone('client -o %s' % util.shellquote(c), abort=False)
+            d = self.runone('client -o %s' % shellquote(c), abort=False)
             if not isinstance(d, dict):
                 raise p4badclient(_('%s is not a valid p4 client') % path)
             code = d.get('code')
@@ -310,14 +326,13 @@ class p4client(object):
             return True
 
         try:
-            mqnode = [self.repo['qbase'].node()]
+            mqnode = [self.repo[revsymbol(self.repo, 'qbase')].node()]
         except Exception:
             mqnode = None
 
         if rev is None:
-            current = self.repo['default']
-        else:
-            current = self.repo[rev]
+            rev = revsymbol(self.repo, 'default')
+        current = self.repo[rev]
 
         current = [(current,())]
         seen = set()
@@ -473,7 +488,7 @@ class p4client(object):
             c.append(client or self.client)
         if self.root:
             c.append('-d')
-            c.append(util.shellquote(self.root))
+            c.append(shellquote(self.root))
 
         if files and len(files)>self.maxargs:
             tmp = TempFile('w')
@@ -487,7 +502,7 @@ class p4client(object):
 
         c.append(cmd)
 
-        cs = ' '.join(c + [util.shellquote(f) for f in files])
+        cs = ' '.join(c + [shellquote(f) for f in files])
         if self.ui.debugflag: self.ui.debug('> %s\n' % cs)
 
         for d in loaditer(os.popen(cs, 'rb')):
@@ -554,10 +569,10 @@ class p4client(object):
 
         change = '%s...@%d,#head' % (self.partial, p4id)
         for d in self.run('changes -l -c %s %s' %
-                           (util.shellquote(self.client), util.shellquote(change))):
+                           (shellquote(self.client), shellquote(change))):
             helper(self,d,p4id)
         for d in self.run('changes -l -c %s -s pending' %
-                           (util.shellquote(self.client))):
+                           (shellquote(self.client))):
             helper(self,d,p4id)
         self.p4pending.sort()
 
@@ -597,7 +612,7 @@ class p4client(object):
                 return r
 
         elif cu:
-            cmd = "%s %s %s" % (util.expandpath(cu), util.shellquote(client), util.shellquote(user))
+            cmd = "%s %s %s" % (util.expandpath(cu), shellquote(client), shellquote(user))
             self.ui.debug('> %s\n' % cmd)
 
             old = os.getcwd()
@@ -614,7 +629,7 @@ class p4client(object):
                 os.chdir(old)
 
         else:
-            d = self.runone('user -o %s' % util.shellquote(user), abort=False)
+            d = self.runone('user -o %s' % shellquote(user), abort=False)
             if 'Update' in d:
                 try:
                     r = '%s <%s>' % (d['FullName'], d['Email'])
@@ -649,7 +664,7 @@ class p4client(object):
         tmp.close()
 
         # update p4 changelist
-        d = self.runone('change -i%s <%s' % (update and " -u" or "", util.shellquote(tmp.Name)))
+        d = self.runone('change -i%s <%s' % (update and " -u" or "", shellquote(tmp.Name)))
         data = d['data']
         if d['code'] == 'info':
             if not self.ui.verbose:
@@ -751,9 +766,9 @@ class p4client(object):
         if files:
             p4cmd = 'fstat'
         elif all:
-            p4cmd = 'fstat %s' % util.shellquote('%s...@%d' % (self.partial, change))
+            p4cmd = 'fstat %s' % shellquote('%s...@%d' % (self.partial, change))
         else:
-            p4cmd = 'fstat -e %d %s' % (change, util.shellquote('%s...' % self.partial))
+            p4cmd = 'fstat -e %d %s' % (change, shellquote('%s...' % self.partial))
 
         for d in self.run(p4cmd, files=files):
             if len(result) % 250 == 0:
@@ -792,7 +807,7 @@ class p4client(object):
         elif force:
             cmd += ' -f'
         if not files:
-            cmd += ' ' + util.shellquote('%s...@%d' % (self.partial, change))
+            cmd += ' ' + shellquote('%s...@%d' % (self.partial, change))
 
         n = 0
         for d in self.run(cmd, files=[("%s@%d" % (os.path.join(self.partial, f), change)) for f in files], abort=False):
@@ -853,8 +868,8 @@ class p4client(object):
                 if utf16:
                     tmp = TempFile(None)
                     tmp.close()
-                    cmd += ' -o %s'%util.shellquote(tmp.Name)
-                cmd += ' %s#%d' % (util.shellquote(entry[0]), entry[1])
+                    cmd += ' -o %s'%shellquote(tmp.Name)
+                cmd += ' %s#%d' % (shellquote(entry[0]), entry[1])
 
                 contents = []
                 for d in self.run(cmd):
@@ -895,7 +910,7 @@ class p4client(object):
         tags = []
         if self.tags:
             change = '%s...@%d,%d' % (self.partial, change, change)
-            for d in self.run('labels %s' % util.shellquote(change)):
+            for d in self.run('labels %s' % shellquote(change)):
                 l = d.get('label')
                 if l:
                     tags.append(l)
@@ -979,7 +994,7 @@ class p4client(object):
            p4cset = '%s...@%d,@%d' % (client.partial, p4id, stoprev)
         else:
            p4cset = '%s...@%d,#head' % (client.partial, p4id)
-        p4cset = util.shellquote(p4cset)
+        p4cset = shellquote(p4cset)
 
         if startrev < 0:
             # most recent changelists
@@ -1103,7 +1118,7 @@ class p4client(object):
 
         # detect MQ
         try:
-            mq = repo.changelog.nodesbetween([repo['qbase'].node()], nodes)[0]
+            mq = repo.changelog.nodesbetween([repo[revsymbol(repo, 'qbase')].node()], nodes)[0]
             if mq:
                 if opts['force']:
                     ui.warn(_('source has mq patches applied\n'))
@@ -1161,7 +1176,7 @@ def incoming(original, ui, repo, source=None, **opts):
             ui.write(_('tag:         %s\n') % tag)
         # ui.write(_('parent:      %d:%s\n') % parent)
         ui.write(_('user:        %s\n') % cl.user)
-        ui.write(_('date:        %s\n') % util.datestr(cl.date))
+        ui.write(_('date:        %s\n') % datestr(cl.date))
         if cl.jobs:
             ui.write(_('jobs:        %s\n') % ' '.join(cl.jobs))
         if ui.verbose:
