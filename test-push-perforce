@@ -241,7 +241,11 @@ hg version
 
 echo % convert
 
-$HG convert -s p4 $DEPOTPATH/... dst
+if ! $HG convert -s p4 $DEPOTPATH/... dst; then
+   # hg convert is broken for Mercurial 4.6 and higher
+   rm -rf dst
+   $HG clone p4://$P4PORT/$P4CLIENT dst
+fi
 
 echo % now work in hg
 cd dst
