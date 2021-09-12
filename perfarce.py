@@ -93,7 +93,7 @@ Five built-in commands are overridden:
            to time (e.g. path/foo and path/FOO are the same object).
 '''
 
-from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, peer, phases, scmutil, util, url
+from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, phases, scmutil, util, url
 from mercurial.node import hex, short
 from mercurial.i18n import _
 from mercurial.error import ConfigError
@@ -115,7 +115,7 @@ import marshal, os, re, string, sys
 propertycache=util.propertycache
 
 try:
-    from mercurial.utils.procutil import shellquote
+    from mercurial.utils.procutil import shellquote, popen
 except ImportError:
     from mercurial.util import shellquote
 
@@ -130,13 +130,16 @@ except ImportError:
     def revsymbol(repo, symbol):
         return symbol
 
+
+file = open
+
 cmdtable = {}
 if registrar is not None:
     command = registrar.command(cmdtable)
 else:
     command = cmdutil.command(cmdtable)
 
-if tuple(util.version().split(".",2)) < ("4","6"):
+if tuple(util.version().split(b".",2)) < (b"4",b"6"):
     def revpairnodes(repo, rev):
         return scmutil.revpair(repo, rev)
 else:
@@ -148,15 +151,15 @@ else:
 def uisetup(ui):
     '''monkeypatch pull and push for p4:// support'''
 
-    extensions.wrapcommand(commands.table, 'pull', pull)
-    p = extensions.wrapcommand(commands.table, 'push', push)
-    p[1].append(('', 'submit', None, 'for p4:// destination submit new changelist to server'))
-    p[1].append(('', 'job', [], 'for p4:// destination set job id(s)'))
-    extensions.wrapcommand(commands.table, 'incoming', incoming)
-    extensions.wrapcommand(commands.table, 'outgoing', outgoing)
-    p = extensions.wrapcommand(commands.table, 'clone', clone)
-    p[1].append(('', 'startrev', '', 'for p4:// source set initial revisions for clone'))
-    p[1].append(('', 'encoding', '', 'for p4:// source set encoding used by server'))
+    extensions.wrapcommand(commands.table, b'pull', pull)
+    p = extensions.wrapcommand(commands.table, b'push', push)
+    p[1].append((b'', b'submit', None, 'for p4:// destination submit new changelist to server'))
+    p[1].append((b'', b'job', [], b'for p4:// destination set job id(s)'))
+    extensions.wrapcommand(commands.table, b'incoming', incoming)
+    extensions.wrapcommand(commands.table, b'outgoing', outgoing)
+    p = extensions.wrapcommand(commands.table, b'clone', clone)
+    p[1].append((b'', b'startrev', b'', b'for p4:// source set initial revisions for clone'))
+    p[1].append((b'', b'encoding', b'', b'for p4:// source set encoding used by server'))
     hg.schemes['p4'] = p4repo
 
 # --------------------------------------------------------------------------
@@ -220,15 +223,28 @@ class TempFile:
         except Exception:
             pass
 
+def int_to_bytes(x: int) -> bytes:
+    if isinstance(x, bytes):
+        return x
+
+    return str(x).encode()
+
+def encode_bool(b):
+    if isinstance(b, bytes):
+        return b
+
+    if b:
+        return b"true"
+    return b"false"
 
 class p4client(object):
 
     def __init__(self, ui, repo, path):
         'initialize a p4client class from the remote path'
 
-        if not path.startswith('p4:'):
+        if not path.startswith(b'p4:'):
             raise p4notclient(_('%s not a p4 repository') % path)
-        if not path.startswith('p4://'):
+        if not path.startswith(b'p4://'):
             raise p4badclient(_('%s not a p4 repository') % path)
 
         self.ui = ui
@@ -239,9 +255,9 @@ class p4client(object):
         self.partial = None     # tail of path for partial checkouts (ending in /), or empty string
         self.rootpart = None    # root+partial directory in client workspace (ending in /)
 
-        self.keep = ui.configbool('perfarce', 'keep', True)
-        self.lowercasepaths = ui.configbool('perfarce', 'lowercasepaths', False)
-        self.ignorecase = ui.configbool('perfarce', 'ignorecase', False)
+        self.keep = ui.configbool(b'perfarce', b'keep', True)
+        self.lowercasepaths = ui.configbool(b'perfarce', b'lowercasepaths', False)
+        self.ignorecase = ui.configbool(b'perfarce', b'ignorecase', False)
 
         # caches
         self.clientspec = {}
@@ -249,30 +265,30 @@ class p4client(object):
         self.p4stat = None
         self.p4pending = None
 
-        if tuple(util.version().split(".",2)) < ("3","2"):
+        if tuple(util.version().split(b".",2)) < (b"3",b"2"):
             self.getfile_none=self.getfile_none_ioerr
         else:
             self.getfile_none=self.getfile_none_none
 
-        s, c = path[5:].split('/', 1)
-        if ':' not in s:
+        s, c = path[5:].split(b'/', 1)
+        if b':' not in s:
             s = '%s:1666' % s
         self.server = s
         if c:
-            if '/' in c:
-                c, p = c.split('/', 1)
-                p = '/'.join(q for q in p.split('/') if q)
+            if b'/' in c:
+                c, p = c.split(b'/', 1)
+                p = b'/'.join(q for q in p.split(b'/') if q)
                 if p:
-                    p += '/'
+                    p += b'/'
             else:
-                p = ''
+                p = b''
 
-            d = self.runone('client -o %s' % shellquote(c), abort=False)
+            d = self.runone(b'client -o %s' % shellquote(c), abort=False)
             if not isinstance(d, dict):
                 raise p4badclient(_('%s is not a valid p4 client') % path)
-            code = d.get('code')
-            if code == 'error':
-                data=d['data'].strip()
+            code = d.get(b'code')
+            if code == b'error':
+                data=d[b'data'].strip()
                 ui.warn('%s\n' % data)
                 raise p4badclient(_('%s is not a valid p4 client: %s') % (path, data))
 
@@ -283,7 +299,7 @@ class p4client(object):
             else:
                 isdir=os.path.isdir
 
-            for n in ['Root'] + ['AltRoots%d' % i for i in range(9)]:
+            for n in [b'Root'] + [b'AltRoots%d' % i for i in range(9)]:
                 if n in d and isdir(d[n]):
                     self.root = util.pconvert(d[n])
                     break
@@ -301,9 +317,9 @@ class p4client(object):
             else:
                 p = self.root
             self.rootpart = util.pconvert(p)
-            if not self.rootpart.endswith('/'):
-                self.rootpart += '/'
-            if self.root.endswith('/'):
+            if not self.rootpart.endswith(b'/'):
+                self.rootpart += b'/'
+            if self.root.endswith(b'/'):
                 self.root = self.root[:-1]
 
     def find(self, rev=None, base=False, p4rev=None, abort=True):
@@ -321,27 +337,27 @@ class p4client(object):
                 return False
 
             for f in ctx.files():
-                if not f.startswith('.hg'):
+                if not f.startswith(b'.hg'):
                     return False
             return True
 
         try:
-            mqnode = [self.repo[revsymbol(self.repo, 'qbase')].node()]
+            mqnode = [self.repo[revsymbol(self.repo, b'qbase')].node()]
         except Exception:
             mqnode = None
 
         if rev is None:
-            rev = revsymbol(self.repo, 'default')
+            rev = revsymbol(self.repo, b'default')
         current = self.repo[rev]
 
         current = [(current,())]
         seen = set()
         while current:
             next = []
-            self.ui.debug("find: %s\n" % (" ".join(hex(c[0].node()) for c in current)))
+            self.ui.debug(b"find: %s\n" % (b" ".join(hex(c[0].node()) for c in current)))
             for ctx,path in current:
                 extra = ctx.extra()
-                if 'p4' in extra:
+                if b'p4' in extra:
                     if base:
                         while path:
                             if dothgonly(path[0]) and not (mqnode and
@@ -350,7 +366,7 @@ class p4client(object):
                                 path = path[1:]
                             else:
                                 path = []
-                    p4 = int(extra['p4'])
+                    p4 = int(extra[b'p4'])
                     if not p4rev or p4==p4rev:
                         return ctx.node(), p4
 
@@ -366,31 +382,31 @@ class p4client(object):
         return node.nullid, 0
 
     @propertycache
-    def re_type(self): return re.compile('([a-z]+)?(text|binary|symlink|apple|resource|unicode|utf\d+)(\+\w+)?$')
+    def re_type(self): return re.compile(b'([a-z]+)?(text|binary|symlink|apple|resource|unicode|utf\d+)(\+\w+)?$')
     @propertycache
-    def re_keywords(self): return re.compile(r'\$(Id|Header|Date|DateTime|Change|File|Revision|Author):[^$\n]*\$')
+    def re_keywords(self): return re.compile(rb'\$(Id|Header|Date|DateTime|Change|File|Revision|Author):[^$\n]*\$')
     @propertycache
-    def re_keywords_old(self): return re.compile('\$(Id|Header):[^$\n]*\$')
+    def re_keywords_old(self): return re.compile(b'\$(Id|Header):[^$\n]*\$')
 
     def decodetype(self, p4type):
         'decode p4 type name into mercurial mode string and keyword substitution regex'
 
-        base = mode = ''
+        base = mode = b''
         keywords = None
         utf16 = False
         p4type = self.re_type.match(p4type)
         if p4type:
             base = p4type.group(2)
-            flags = (p4type.group(1) or '') + (p4type.group(3) or '')
-            if 'x' in flags:
-                mode = 'x'
-            if base == 'symlink':
-                mode = 'l'
-            if base == 'utf16':
+            flags = (p4type.group(1) or b'') + (p4type.group(3) or b'')
+            if b'x' in flags:
+                mode = b'x'
+            if base == b'symlink':
+                mode = b'l'
+            if base == b'utf16':
                 utf16 = True
-            if 'ko' in flags:
+            if b'ko' in flags:
                 keywords = self.re_keywords_old
-            elif 'k' in flags:
+            elif b'k' in flags:
                 keywords = self.re_keywords
         return base, mode, keywords, utf16
 
@@ -405,7 +421,7 @@ class p4client(object):
         e = os.environ.get("P4CHARSET")
         if e:
             return emap.get(e,e)
-        return self.ui.config('perfarce', 'encoding', None)
+        return self.ui.config(b'perfarce', b'encoding', None)
 
     def decode(self, text):
         'decode text in p4 character set as utf-8'
@@ -413,7 +429,7 @@ class p4client(object):
         if self.encoding:
             try:
                 return text.decode(self.encoding).encode(encoding.encoding)
-            except LookupError, e:
+            except LookupError as e:
                 raise error.Abort("%s, please check your locale settings" % e)
         return text
 
@@ -423,7 +439,7 @@ class p4client(object):
         if self.encoding:
             try:
                 return text.decode(encoding.encoding).encode(self.encoding)
-            except LookupError, e:
+            except LookupError as e:
                 raise error.Abort("%s, please check your locale settings" % e)
         return text
 
@@ -431,7 +447,7 @@ class p4client(object):
     @staticmethod
     def encodename(name):
         'escape @ # % * characters in a p4 filename'
-        return name.replace('%','%25').replace('@','%40').replace('#','%23').replace('*','%2A')
+        return name.replace(b'%',b'%25').replace(b'@',b'%40').replace(b'#',b'%23').replace(b'*',b'%2A')
 
 
     @staticmethod
@@ -440,7 +456,7 @@ class p4client(object):
         return os.path.normpath(name).lower()
 
     @propertycache
-    def re_hgid(self): return re.compile('{{mercurial (([0-9a-f]{40})(:([0-9a-f]{40}))?)}}')
+    def re_hgid(self): return re.compile(b'{{mercurial (([0-9a-f]{40})(:([0-9a-f]{40}))?)}}')
 
     def parsenodes(self, desc):
         'find revisions in p4 changelist description'
@@ -452,7 +468,7 @@ class p4client(object):
                     [self.repo[m.group(2)].node()], [self.repo[m.group(4) or m.group(2)].node()])[0]
             except Exception:
                 if self.ui.traceback:self.ui.traceback()
-                self.ui.note(_('ignoring hg revision range %s from p4\n' % m.group(1)))
+                self.ui.note(_(b'ignoring hg revision range %s from p4\n' % m.group(1)))
         return nodes, m
 
     def configint(self, section, name, default=None):
@@ -465,7 +481,7 @@ class p4client(object):
     @propertycache
     def maxargs(self):
         try:
-            r = self.configint('perfarce', 'maxargs', 0)
+            r = self.configint(b'perfarce', b'maxargs', 0)
         except ConfigError:
             r = 0
         if r<1:
@@ -479,42 +495,42 @@ class p4client(object):
     def run(self, cmd, files=[], abort=True, client=None):
         'Run a P4 command and yield the objects returned'
 
-        c = ['p4', '-G']
+        c = [b'p4', b'-G']
         if self.server:
-            c.append('-p')
+            c.append(b'-p')
             c.append(self.server)
         if client or self.client:
-            c.append('-c')
+            c.append(b'-c')
             c.append(client or self.client)
         if self.root:
-            c.append('-d')
+            c.append(b'-d')
             c.append(shellquote(self.root))
 
         if files and len(files)>self.maxargs:
             tmp = TempFile('w')
             for f in files:
-                if self.ui.debugflag: self.ui.debug('> -x %s\n' % f)
-                print >>tmp.File,f
+                if self.ui.debugflag: self.ui.debug(b'> -x %s\n' % f)
+                print(f, file=tmp.File)
             tmp.close()
-            c.append('-x')
+            c.append(b'-x')
             c.append(tmp.Name)
             files = []
 
         c.append(cmd)
 
-        cs = ' '.join(c + [shellquote(f) for f in files])
-        if self.ui.debugflag: self.ui.debug('> %s\n' % cs)
+        cs = b' '.join(c + [shellquote(f) for f in files])
+        if self.ui.debugflag: self.ui.debug(b'> %s\n' % cs)
 
-        for d in loaditer(os.popen(cs, 'rb')):
-            if self.ui.debugflag: self.ui.debug('< %r\n' % d)
-            code = d.get('code')
-            data = d.get('data')
+        for d in loaditer(popen(cs, b'rb')):
+            if self.ui.debugflag: self.ui.debug(b'< %r\n' % d)
+            code = d.get(b'code')
+            data = d.get(b'data')
             if code is not None and data is not None:
                 data = data.strip()
-                if abort and code == 'error':
-                    raise error.Abort('p4: %s' % data)
-                elif code == 'info':
-                    self.ui.note('p4: %s\n' % data)
+                if abort and code == b'error':
+                    raise error.Abort(b'p4: %s' % data)
+                elif code == b'info':
+                    self.ui.note(b'p4: %s\n' % data)
             yield d
 
     def runs(self, cmd, **args):
@@ -556,22 +572,22 @@ class p4client(object):
         p4rev, p4id = self.find(abort=False)
 
         def helper(self,d,p4id):
-            c = int(d['change'])
+            c = int(d[b'change'])
             if c == p4id:
                 return
 
-            desc = d['desc']
+            desc = d[b'desc']
             nodes, match = self.parsenodes(desc)
-            entry = (c, d['status'] == 'submitted', nodes, desc, d['client'])
+            entry = (c, d[b'status'] == b'submitted', nodes, desc, d[b'client'])
             self.p4pending.append(entry)
             for n in nodes:
                 self.p4stat.add(n)
 
-        change = '%s...@%d,#head' % (self.partial, p4id)
-        for d in self.run('changes -l -c %s %s' %
+        change = b'%s...@%d,#head' % (self.partial, p4id)
+        for d in self.run(b'changes -l -c %s %s' %
                            (shellquote(self.client), shellquote(change))):
             helper(self,d,p4id)
-        for d in self.run('changes -l -c %s -s pending' %
+        for d in self.run(b'changes -l -c %s -s pending' %
                            (shellquote(self.client))):
             helper(self,d,p4id)
         self.p4pending.sort()
@@ -601,10 +617,10 @@ class p4client(object):
             return r
 
         # allow mapping the client name into a user name
-        cu = self.ui.config("perfarce","clientuser")
+        cu = self.ui.config(b"perfarce",b"clientuser")
 
-        if cu and " " in cu:
-            cus, cur = cu.split(" ", 1)
+        if cu and b" " in cu:
+            cus, cur = cu.split(b" ", 1)
             u, f = re.subn(cus, cur, client)
             if f:
                 r = string.capwords(u)
@@ -612,8 +628,8 @@ class p4client(object):
                 return r
 
         elif cu:
-            cmd = "%s %s %s" % (util.expandpath(cu), shellquote(client), shellquote(user))
-            self.ui.debug('> %s\n' % cmd)
+            cmd = b"%s %s %s" % (util.expandpath(cu), shellquote(client), shellquote(user))
+            self.ui.debug(b'> %s\n' % cmd)
 
             old = os.getcwd()
             try:
@@ -621,7 +637,7 @@ class p4client(object):
                 r = None
                 for r in util.popen(cmd):
                     r = r.strip()
-                    self.ui.debug('< %r\n' % r)
+                    self.ui.debug(b'< %r\n' % r)
                 if r:
                     self.usercache[(user, client)] = r
                     return r
@@ -629,10 +645,10 @@ class p4client(object):
                 os.chdir(old)
 
         else:
-            d = self.runone('user -o %s' % shellquote(user), abort=False)
-            if 'Update' in d:
+            d = self.runone(b'user -o %s' % shellquote(user), abort=False)
+            if b'Update' in d:
                 try:
-                    r = '%s <%s>' % (d['FullName'], d['Email'])
+                    r = b'%s <%s>' % (d[b'FullName'], d[b'Email'])
                     self.usercache[(user, None)] = r
                     return r
                 except Exception:
@@ -642,21 +658,21 @@ class p4client(object):
 
 
     @propertycache
-    def re_changeno(self): return re.compile('Change ([0-9]+) created.+')
+    def re_changeno(self): return re.compile(b'Change ([0-9]+) created.+')
 
     def change(self, change=None, description=None, update=False, jobs=None):
         '''Create a new p4 changelist or update an existing changelist with
         the given description. Returns the changelist number as a string.'''
 
         # get changelist data, and update it
-        changelist = self.runone('change -o %s' % (change or ''))
+        changelist = self.runone(b'change -o %s' % (change or b''))
 
         if jobs:
             for i,j in enumerate(jobs):
-                changelist['Jobs%d'%i] = self.encode(j)
+                changelist[b'Jobs%d'%i] = self.encode(j)
 
         if description is not None:
-            changelist['Description'] = self.encode(description)
+            changelist[b'Description'] = self.encode(description)
 
         # write changelist data to a temporary file
         tmp = TempFile('wb')
@@ -664,11 +680,11 @@ class p4client(object):
         tmp.close()
 
         # update p4 changelist
-        d = self.runone('change -i%s <%s' % (update and " -u" or "", shellquote(tmp.Name)))
-        data = d['data']
-        if d['code'] == 'info':
+        d = self.runone(b'change -i%s <%s' % (update and b" -u" or b"", shellquote(tmp.Name.encode('utf-8'))))
+        data = d[b'data']
+        if d[b'code'] == b'info':
             if not self.ui.verbose:
-                self.ui.status('p4: %s\n' % data)
+                self.ui.status(b'p4: %s\n' % data)
             if not change:
                 m = self.re_changeno.match(data)
                 if m:
@@ -693,9 +709,9 @@ class p4client(object):
             return "%s(%s)"%(self.__class__.__name__,
                        ", ".join("%s=%r"%(k,getattr(self,k)) for k in sorted(self.__dict__.keys())))
 
-    actions = { 'add':'A', 'branch':'A', 'move/add':'A',
-                'edit':'M', 'integrate':'M', 'import':'A',
-                'delete':'R', 'move/delete':'R', 'purge':'R',
+    actions = { b'add':b'A', b'branch':b'A', b'move/add':b'A',
+                b'edit':b'M', b'integrate':b'M', b'import':b'A',
+                b'delete':b'R', b'move/delete':b'R', b'purge':b'R',
               }
 
     def describe(self, change, local=None, shelve=False):
@@ -708,13 +724,13 @@ class p4client(object):
         so when this is used on pending changelists.
         '''
 
-        d = self.runone('describe -%s %s' % ("S" if shelve else "s", change))
-        client = d['client']
-        status = d['status']
-        r = self.description(change=d['change'],
-                             desc=self.decode(d['desc']),
-                             user=self.getuser(self.decode(d['user']), client),
-                             date=(int(d['time']), 0),     # p4 uses UNIX epoch
+        d = self.runone(b'describe -%s %s' % (b"S" if shelve else b"s", int_to_bytes(change)))
+        client = d[b'client']
+        status = d[b'status']
+        r = self.description(change=d[b'change'],
+                             desc=self.decode(d[b'desc']),
+                             user=self.getuser(self.decode(d[b'user']), client),
+                             date=(int(d[b'time']), 0),     # p4 uses UNIX epoch
                              status=status,
                              client=client)
 
@@ -725,13 +741,13 @@ class p4client(object):
             r.files = []
             i = 0
             while True:
-                df = 'depotFile%d' % i
+                df = b'depotFile%d' % i
                 if df not in d:
                     break
                 df = d[df]
-                rv = d['rev%d' % i]
-                tp = d['type%d' % i]
-                ac = d['action%d' % i]
+                rv = d[b'rev%d' % i]
+                tp = d[b'type%d' % i]
+                ac = d[b'action%d' % i]
                 files[df] = item = (df, int(rv), tp, self.actions[ac])
                 r.files.append(item)
                 i += 1
@@ -739,7 +755,7 @@ class p4client(object):
         r.jobs = []
         i = 0
         while True:
-            jn = 'job%d' % i
+            jn = b'job%d' % i
             if jn not in d:
                 break
             r.jobs.append(d[jn])
@@ -747,8 +763,8 @@ class p4client(object):
 
         if local and files:
             r.files = []
-            for d in self.run('where', files=[f for f in files]):
-                r.files.append(files[d['depotFile']] + (self.repopath(d['path']),))
+            for d in self.run(b'where', files=[f for f in files]):
+                r.files.append(files[d[b'depotFile']] + (self.repopath(d[b'path']),))
 
         return r
 
@@ -764,33 +780,33 @@ class p4client(object):
         result = []
 
         if files:
-            p4cmd = 'fstat'
+            p4cmd = b'fstat'
         elif all:
-            p4cmd = 'fstat %s' % shellquote('%s...@%d' % (self.partial, change))
+            p4cmd = b'fstat %s' % shellquote(b'%s...@%d' % (self.partial, change))
         else:
-            p4cmd = 'fstat -e %d %s' % (change, shellquote('%s...' % self.partial))
+            p4cmd = b'fstat -e %d %s' % (change, shellquote(b'%s...' % self.partial))
 
         for d in self.run(p4cmd, files=files):
             if len(result) % 250 == 0:
                 if hasattr(self.ui, 'progress'):
-                    self.ui.progress('p4 fstat', len(result), unit='entries')
+                    self.ui.progress(b'p4 fstat', len(result), unit=b'entries')
                 else:
-                    self.ui.note(_('%d files\r') % len(result))
+                    self.ui.note(_(b'%d files\r') % len(result))
                     self.ui.flush()
 
-            if 'desc' in d or d['clientFile'].startswith('.hg'):
+            if b'desc' in d or d[b'clientFile'].startswith(b'.hg'):
                 continue
             else:
-                lf = self.repopath(d['clientFile'])
-                df = d['depotFile']
-                rv = d['headRev']
-                tp = d['headType']
-                ac = d['headAction']
+                lf = self.repopath(d[b'clientFile'])
+                df = d[b'depotFile']
+                rv = d[b'headRev']
+                tp = d[b'headType']
+                ac = d[b'headAction']
                 result.append((df, int(rv), tp, self.actions[ac], lf))
 
         if hasattr(self.ui, 'progress'):
             self.ui.progress('p4 fstat', None)
-        self.ui.note(_('%d files \n') % len(result))
+        self.ui.note(_(b'%d files \n') % len(result))
 
         return result
 
@@ -801,27 +817,27 @@ class p4client(object):
         not used here, but indicates that the caller wants all the files
         at that revision, not just the files affected by the change.'''
 
-        cmd = 'sync'
+        cmd = b'sync'
         if fake:
-            cmd += ' -k'
+            cmd += b' -k'
         elif force:
-            cmd += ' -f'
+            cmd += b' -f'
         if not files:
-            cmd += ' ' + shellquote('%s...@%d' % (self.partial, change))
+            cmd += b' ' + shellquote(b'%s...@%d' % (self.partial, change))
 
         n = 0
-        for d in self.run(cmd, files=[("%s@%d" % (os.path.join(self.partial, f), change)) for f in files], abort=False):
+        for d in self.run(cmd, files=[(b"%s@%d" % (os.path.join(self.partial, f), change)) for f in files], abort=False):
             n += 1
             if n % 250 == 0:
                 if hasattr(self.ui, 'progress'):
                     self.ui.progress('p4 sync', n, unit='files')
-            code = d.get('code')
-            if code == 'error':
-                data = d['data'].strip()
-                if d['generic'] == 17 or d['severity'] == 2:
-                    self.ui.note('p4: %s\n' % data)
+            code = d.get(b'code')
+            if code == b'error':
+                data = d[b'data'].strip()
+                if d[b'generic'] == 17 or d[b'severity'] == 2:
+                    self.ui.note(b'p4: %s\n' % data)
                 else:
-                    raise error.Abort('p4: %s' % data)
+                    raise error.Abort(b'p4: %s' % data)
 
         if hasattr(self.ui, 'progress'):
             self.ui.progress('p4 sync', None)
@@ -831,7 +847,7 @@ class p4client(object):
 
     def getfile_none_ioerr(self, entry):
         "Mercurial up to 3.1 uses IOError to signal removed files"
-        self.ui.debug('getfile ioerror on %r\n'%(entry,))
+        self.ui.debug(b'getfile ioerror on %r\n'%(entry,))
         raise IOError()
 
     def getfile_none_none(self, entry):
@@ -846,7 +862,7 @@ class p4client(object):
         Raises IOError or returns None,None if the file is deleted (depending on version).
         '''
 
-        if entry[3] == 'R':
+        if entry[3] == b'R':
             return self.getfile_none(entry)
 
         try:
@@ -854,7 +870,7 @@ class p4client(object):
 
             if self.keep:
                 fn = self.localpath(entry[4])
-                if mode == 'l':
+                if mode == b'l':
                     try:
                         contents = os.readlink(fn)
                     except AttributeError:
@@ -864,32 +880,32 @@ class p4client(object):
                 else:
                     contents = file(fn, 'rb').read()
             else:
-                cmd = 'print'
+                cmd = b'print'
                 if utf16:
                     tmp = TempFile(None)
                     tmp.close()
-                    cmd += ' -o %s'%shellquote(tmp.Name)
-                cmd += ' %s#%d' % (shellquote(entry[0]), entry[1])
+                    cmd += b' -o %s'%shellquote(tmp.Name)
+                cmd += b' %s#%d' % (shellquote(entry[0]), entry[1])
 
                 contents = []
                 for d in self.run(cmd):
-                    code = d['code']
-                    if code == 'text' or code == 'binary':
-                        contents.append(d['data'])
+                    code = d[b'code']
+                    if code == b'text' or code == b'binary':
+                        contents.append(d[b'data'])
 
                 if utf16:
                     contents = file(tmp.Name, 'rb').read()
                 else:
-                    contents = ''.join(contents)
+                    contents = b''.join(contents)
 
-                if mode == 'l' and contents.endswith('\n'):
+                if mode == b'l' and contents.endswith('\n'):
                     contents = contents[:-1]
 
             if keywords:
                 contents = keywords.sub('$\\1$', contents)
 
             return mode, contents
-        except Exception, e:
+        except Exception as e:
             if self.ui.traceback:self.ui.traceback()
             raise error.Abort(_('file %s missing in p4 workspace') % entry[4])
 
@@ -897,11 +913,11 @@ class p4client(object):
     @propertycache
     def tags(self):
         try:
-            t = self.configint('perfarce', 'tags', -1)
-        except (ConfigError,ValueError),e:
+            t = self.configint(b'perfarce', b'tags', -1)
+        except (ConfigError,ValueError) as e:
             t = -1
         if t<0 or t>2:
-            t = self.ui.configbool('perfarce', 'tags', True)
+            t = self.ui.configbool(b'perfarce', b'tags', True)
         return t
 
     def labels(self, change):
@@ -909,9 +925,9 @@ class p4client(object):
 
         tags = []
         if self.tags:
-            change = '%s...@%d,%d' % (self.partial, change, change)
-            for d in self.run('labels %s' % shellquote(change)):
-                l = d.get('label')
+            change = b'%s...@%d,%d' % (self.partial, change, change)
+            for d in self.run(b'labels %s' % shellquote(change)):
+                l = d.get(b'label')
                 if l:
                     tags.append(l)
 
@@ -923,12 +939,12 @@ class p4client(object):
         or modified in the p4 workarea'''
 
         cl = None
-        for d in self.run('submit -c %s' % change):
-            if d['code'] == 'error':
-                raise error.Abort(_('error submitting p4 change %s: %s') % (change, d['data']))
-            cl = d.get('submittedChange', cl)
+        for d in self.run(b'submit -c %s' % int_to_bytes(change)):
+            if d[b'code'] == b'error':
+                raise error.Abort(_('error submitting p4 change %s: %s') % (int_to_bytes(change), d['data']))
+            cl = d.get(b'submittedChange', cl)
 
-        self.ui.note(_('submitted changelist %s\n') % cl)
+        self.ui.note(_(b'submitted changelist %s\n') % cl)
 
         if not self.keep:
             # delete the files in the p4 client directory
@@ -943,13 +959,13 @@ class p4client(object):
         these advanced features are available since about 2009.1 or so.'''
 
         mc = []
-        for op in 'move','copy':
-            v = self.ui.configbool('perfarce', op, None)
+        for op in b'move',b'copy':
+            v = self.ui.configbool(b'perfarce', op, None)
             if v is None:
-                self.ui.note(_('checking if p4 %s is supported, set perfarce.%s to skip this test\n') % (op, op))
-                d = self.runone('help %s' % op, abort=False)
-                v = d['code']=='info'
-                self.ui.debug(_('p4 %s is %ssupported\n') % (op, ["not ",""][v]))
+                self.ui.note(_(b'checking if p4 %s is supported, set perfarce.%s to skip this test\n') % (op, op))
+                d = self.runone(b'help %s' % op, abort=False)
+                v = d[b'code']==b'info'
+                self.ui.debug(_(b'p4 %s is %ssupported\n') % (op, [b"not ",b""][v]))
             mc.append(v)
 
         return tuple(mc)
@@ -959,30 +975,30 @@ class p4client(object):
     def pullcommon(original, ui, repo, source, **opts):
         'Shared code for pull and incoming'
 
-        if opts.get('mq',None):
+        if opts.get(b'mq',None):
             return True, original(ui, repo, *(source and [source] or []), **opts)
 
-        source = ui.expandpath(source or 'default')
+        source = ui.expandpath(source or b'default')
         try:
             client = p4client(ui, repo, source)
         except p4notclient:
             if ui.traceback:ui.traceback()
             return True, original(ui, repo, *(source and [source] or []), **opts)
-        except p4badclient,e:
+        except p4badclient as e:
             if ui.traceback:ui.traceback()
             raise error.Abort(str(e))
 
         # if present, --rev will be the last Perforce changeset number to get
-        stoprev = opts.get('rev')
+        stoprev = opts.get(b'rev')
         stoprev = stoprev and max(int(r) for r in stoprev) or 0
 
         # for clone we support a --startrev option to fold initial changelists
-        startrev = opts.get('startrev')
+        startrev = opts.get(b'startrev')
         startrev = startrev and int(startrev) or 0
 
         # for clone we support an --encoding option to set server character set
-        if opts.get('encoding'):
-            client.encoding = opts.get('encoding')
+        if opts.get(b'encoding'):
+            client.encoding = opts.get(b'encoding')
 
         if len(repo):
             p4rev, p4id = client.find(base=True, abort=not opts['force'])
@@ -991,20 +1007,20 @@ class p4client(object):
         p4id = max(p4id, startrev)
 
         if stoprev:
-           p4cset = '%s...@%d,@%d' % (client.partial, p4id, stoprev)
+           p4cset = b'%s...@%d,@%d' % (client.partial, p4id, stoprev)
         else:
-           p4cset = '%s...@%d,#head' % (client.partial, p4id)
+           p4cset = b'%s...@%d,#head' % (client.partial, p4id)
         p4cset = shellquote(p4cset)
 
         if startrev < 0:
             # most recent changelists
-            p4cmd = 'changes -s submitted -m %d -L %s' % (-startrev, p4cset)
+            p4cmd = b'changes -s submitted -m %d -L %s' % (-startrev, p4cset)
         else:
-            p4cmd = 'changes -s submitted -L %s' % p4cset
+            p4cmd = b'changes -s submitted -L %s' % p4cset
 
         changes = []
         for d in client.run(p4cmd):
-            c = int(d['change'])
+            c = int(d[b'change'])
             if startrev or c != p4id:
                 changes.append(c)
         changes.sort()
@@ -1016,21 +1032,21 @@ class p4client(object):
     def pushcommon(out, original, ui, repo, dest, **opts):
         'Shared code for push and outgoing'
 
-        if opts.get('mq',None):
+        if opts.get(b'mq',None):
             return True, original(ui, repo, *(dest and [dest] or []), **opts)
 
-        dest = ui.expandpath(dest or 'default-push', dest or 'default')
+        dest = ui.expandpath(dest or b'default-push', dest or b'default')
         try:
             client = p4client(ui, repo, dest)
         except p4notclient:
-            if ui.traceback:ui.traceback()
+            if ui.traceback: ui.traceback()
             return True, original(ui, repo, *(dest and [dest] or []), **opts)
-        except p4badclient,e:
+        except p4badclient as e:
             raise error.Abort(str(e))
 
         p4rev, p4id = client.find(base=True, abort=not opts['force'])
         ctx1 = repo[p4rev]
-        rev = opts.get('rev')
+        rev = opts.get(b'rev')
 
         if rev:
             n1, n2 = revpairnodes(repo, rev)
@@ -1042,7 +1058,7 @@ class p4client(object):
                 ctx2 = repo[n1]
                 ctx1 = ctx2.parents()[0]
         else:
-            ctx2 = repo['tip']
+            ctx2 = repo[b'tip']
 
         nodes = repo.changelog.nodesbetween([ctx1.node()], [ctx2.node()])[0][bool(p4id):]
 
@@ -1065,7 +1081,7 @@ class p4client(object):
 
             if ui.debugflag:
                 for n in nodes:
-                    ui.debug('outgoing %s\n' % hex(n))
+                    ui.debug(b'outgoing %s\n' % hex(n))
 
             # check that remaining nodes have not already been pushed
             for n in nodes:
@@ -1075,7 +1091,7 @@ class p4client(object):
                     fail = True
                 for ctx3 in n.children():
                     extra = ctx3.extra()
-                    if 'p4' in extra:
+                    if b'p4' in extra:
                         fail = True
                         break
                 if fail:
@@ -1089,7 +1105,7 @@ class p4client(object):
             mod, add, rem = tuple(repo.status(node1=ctx1.node(), node2=ctx2.node()))[:3]
             mod = [(f, ctx2.flags(f)) for f in mod]
             add = [(f, ctx2.flags(f)) for f in add]
-            rem = [(f, "") for f in rem]
+            rem = [(f, b"") for f in rem]
 
             try:
                 # Mercurial 2.1
@@ -1107,7 +1123,7 @@ class p4client(object):
                 i = 0
                 while i < len(changes):
                     f = changes[i][0]
-                    if f.startswith('.hg'):
+                    if f.startswith(b'.hg'):
                         del changes[i]
                     else:
                         i += 1
@@ -1118,7 +1134,7 @@ class p4client(object):
 
         # detect MQ
         try:
-            mq = repo.changelog.nodesbetween([repo[revsymbol(repo, 'qbase')].node()], nodes)[0]
+            mq = repo.changelog.nodesbetween([repo[revsymbol(repo, b'qbase')].node()], nodes)[0]
             if mq:
                 if opts['force']:
                     ui.warn(_('source has mq patches applied\n'))
@@ -1140,13 +1156,13 @@ class p4client(object):
             h = []
         h.append(repo[nodes[-1]].hex())
 
-        desc='\n* * *\n'.join(desc) + '\n\n{{mercurial %s}}\n' % (':'.join(h))
+        desc=b'\n* * *\n'.join(desc) + b'\n\n{{mercurial %s}}\n' % (b':'.join(h))
 
         if ui.debugflag:
-            ui.debug('mod = %r\n' % (mod,))
-            ui.debug('add = %r\n' % (add,))
-            ui.debug('rem = %r\n' % (rem,))
-            ui.debug('cpy = %r\n' % (cpy,))
+            ui.debug(b'mod = %r\n' % (mod,))
+            ui.debug(b'add = %r\n' % (add,))
+            ui.debug(b'rem = %r\n' % (rem,))
+            ui.debug(b'cpy = %r\n' % (cpy,))
 
         return False, (client, p4rev, p4id, nodes, ctx2, desc, mod, add, rem, cpy)
 
@@ -1170,27 +1186,27 @@ def incoming(original, ui, repo, source=None, **opts):
         cl = client.describe(c, local=ui.verbose)
         tags = client.labels(c)
 
-        ui.write(_('changelist:  %d\n') % c)
+        ui.write(_(b'changelist:  %d\n') % c)
         # ui.write(_('branch:      %s\n') % branch)
         for tag in tags:
-            ui.write(_('tag:         %s\n') % tag)
+            ui.write(_(b'tag:         %s\n') % tag)
         # ui.write(_('parent:      %d:%s\n') % parent)
-        ui.write(_('user:        %s\n') % cl.user)
-        ui.write(_('date:        %s\n') % datestr(cl.date))
+        ui.write(_(b'user:        %s\n') % cl.user)
+        ui.write(_(b'date:        %s\n') % datestr(cl.date))
         if cl.jobs:
-            ui.write(_('jobs:        %s\n') % ' '.join(cl.jobs))
+            ui.write(_(b'jobs:        %s\n') % b' '.join(cl.jobs))
         if ui.verbose:
-            ui.write(_('files:       %s\n') % ' '.join(f[4] for f in cl.files))
+            ui.write(_(b'files:       %s\n') % b' '.join(f[4] for f in cl.files))
 
         if cl.desc:
             if ui.verbose:
                 ui.write(_('description:\n'))
                 ui.write(cl.desc)
-                ui.write('\n')
+                ui.write(b'\n')
             else:
-                ui.write(_('summary:     %s\n') % cl.desc.splitlines()[0])
+                ui.write(_(b'summary:     %s\n') % cl.desc.splitlines()[0])
 
-        ui.write('\n')
+        ui.write(b'\n')
         limit-=1
         if limit==0:
             break
@@ -1218,18 +1234,18 @@ def pull(original, ui, repo, source=None, **opts):
 
     def getfilectx(repo, memctx, fn):
         'callback to read file data'
-        if fn.startswith('.hg'):
+        if fn.startswith(b'.hg'):
             return repo[parent].filectx(fn)
 
-        if entries[fn][3] == 'R' and getattr(memctx, '_returnnoneformissingfiles', False):
+        if entries[fn][3] == b'R' and getattr(memctx, '_returnnoneformissingfiles', False):
             # from 3.1 onvards, ctx expects None for deleted files
-            client.ui.debug('removed file %r\n'%(entries[fn],))
+            client.ui.debug(b'removed file %r\n'%(entries[fn],))
             return None
 
         mode, contents = client.getfile(entries[fn])
         if contents is None:
             return None
-        return memfilectx(context, repo, fn, contents, 'l' in mode, 'x' in mode)
+        return memfilectx(context, repo, fn, contents, b'l' in mode, b'x' in mode)
 
     # for clone we support a --startrev option to fold initial changelists
     if startrev:
@@ -1247,11 +1263,11 @@ def pull(original, ui, repo, source=None, **opts):
         ui.note(_("ignoring case in file names.\n"))
 
     tags = {}
-    trim = ui.configbool('perfarce', 'pull_trim_log', False)
+    trim = ui.configbool(b'perfarce', b'pull_trim_log', False)
 
     try:
         for c in changes:
-            ui.note(_('change %s\n') % c)
+            ui.note(_(b'change %s\n') % int_to_bytes(c))
             cl = client.describe(c)
             files = client.fstat(c, all=bool(startrev))
 
@@ -1259,18 +1275,18 @@ def pull(original, ui, repo, source=None, **opts):
                 if startrev:
                     client.sync(c, all=True, force=True)
                 else:
-                    client.runs('revert -k', files=[f[0] for f in files], abort=False)
-                    client.sync(c, force=True, files=[f[0] for f in files if f[3]=="R"]+
-                                                     [f[0] for f in files if f[3]!="R"])
+                    client.runs(b'revert -k', files=[f[0] for f in files], abort=False)
+                    client.sync(c, force=True, files=[f[0] for f in files if f[3]==b"R"]+
+                                                     [f[0] for f in files if f[3]!=b"R"])
 
             nodes, match = client.parsenodes(cl.desc)
             if nodes:
                 parent = nodes[-1]
-                hgfiles = [f for f in repo[parent].files() if f.startswith('.hg')]
+                hgfiles = [f for f in repo[parent].files() if f.startswith(b'.hg')]
                 if trim:
                     # remove mercurial id from description in p4
                     cl.desc = cl.desc[:match.start(0)] + cl.desc[match.end(0):]
-                    if cl.desc.endswith("\n\n\n"):
+                    if cl.desc.endswith(b"\n\n\n"):
                         cl.desc = cl.desc[:-2]
                     client.change(c, cl.desc, update=True)
             else:
@@ -1283,10 +1299,10 @@ def pull(original, ui, repo, source=None, **opts):
                 extra = {}
                 startrev = None
             else:
-                extra = {'p4':c}
+                extra = {b'p4': int_to_bytes(c)}
 
             if cl.jobs:
-                extra['p4jobs'] = " ".join(cl.jobs)
+                extra[b'p4jobs'] = b" ".join(cl.jobs)
 
             entries.clear()
             if client.ignorecase:
@@ -1305,7 +1321,7 @@ def pull(original, ui, repo, source=None, **opts):
                 entries.update((f[4], f) for f in files)
 
             ctx = context.memctx(repo, (p4rev, parent), cl.desc,
-                                 entries.keys() + hgfiles,
+                                 list(entries.keys()) + hgfiles,
                                  getfilectx, cl.user, cl.date, extra)
 
             p4rev = repo.commitctx(ctx)
@@ -1314,39 +1330,39 @@ def pull(original, ui, repo, source=None, **opts):
             for l in client.labels(c):
                 tags[l] = (c, ctx.hex())
 
-            repo.pushkey('phases', ctx.hex(), str(phases.draft), str(phases.public))
+            repo.pushkey(b'phases', ctx.hex(), str(phases.draft), str(phases.public))
 
-            ui.note(_('added changeset %d:%s\n') % (ctx.rev(), ctx))
+            ui.note(_(b'added changeset %d:%s\n') % (ctx.rev(), ctx))
 
     finally:
         if tags:
             p4rev, p4id = client.find()
             ctx = repo[p4rev]
 
-            if '.hgtags' in ctx:
-                tagdata = [ctx.filectx('.hgtags').data()]
+            if b'.hgtags' in ctx:
+                tagdata = [ctx.filectx(b'.hgtags').data()]
             else:
                 tagdata = []
 
-            desc = ['p4 tags']
+            desc = [b'p4 tags']
             for l in sorted(tags):
                 t = tags[l]
-                desc.append('   %s @ %d' % (l, t[0]))
-                tagdata.append('%s %s\n' % (t[1], l))
+                desc.append(b'   %s @ %d' % (l, t[0]))
+                tagdata.append(b'%s %s\n' % (t[1], l))
 
             def getfilectx(repo, memctx, fn):
                 'callback to read file data'
-                assert fn=='.hgtags'
-                return memfilectx(context, repo, fn, ''.join(tagdata), False, False)
+                assert fn==b'.hgtags'
+                return memfilectx(context, repo, fn, b''.join(tagdata), False, False)
 
-            ctx = context.memctx(repo, (p4rev, None), '\n'.join(desc),
-                                 ['.hgtags'], getfilectx)
+            ctx = context.memctx(repo, (p4rev, None), b'\n'.join(desc),
+                                 [b'.hgtags'], getfilectx)
             p4rev = repo.commitctx(ctx)
             ctx = repo[p4rev]
-            ui.note(_('added changeset %d:%s\n') % (ctx.rev(), ctx))
+            ui.note(_(b'added changeset %d:%s\n') % (ctx.rev(), ctx))
 
     if opts['update']:
-        return hg.update(repo, 'tip')
+        return hg.update(repo, b'tip')
 
 
 def clone(original, ui, source, dest=None, **opts):
@@ -1357,11 +1373,11 @@ def clone(original, ui, source, dest=None, **opts):
     except p4notclient:
         if ui.traceback:ui.traceback()
         return original(ui, source, dest, **opts)
-    except p4badclient,e:
+    except p4badclient as e:
         raise error.Abort(str(e))
 
-    d = client.runone('info')
-    if not isinstance(d,dict) or d['clientName']=='*unknown*' or "clientRoot" not in d:
+    d = client.runone(b'info')
+    if not isinstance(d,dict) or d[b'clientName']=='*unknown*' or b"clientRoot" not in d:
         raise error.Abort(_('%s is not a valid p4 client') % source)
 
     if dest is None:
@@ -1401,27 +1417,27 @@ def clone(original, ui, source, dest=None, **opts):
         r = pull(None, ui, repo, source=source, **opts)
     finally:
         try:
-            fp = repo.vfs("hgrc", "w", text=True)
+            fp = repo.vfs(b"hgrc", b"w", text=True)
         except TypeError:
             # Mercurial 4.5
-            fp = repo.vfs("hgrc", "w")
-        fp.write("[paths]\n")
-        fp.write("default = %s\n" % source)
-        fp.write("\n[perfarce]\n")
-        fp.write("ignorecase = %s\n" % client.ignorecase)
-        fp.write("keep = %s\n" % client.keep)
-        fp.write("lowercasepaths = %s\n" % client.lowercasepaths)
-        fp.write("tags = %s\n" % client.tags)
+            fp = repo.vfs(b"hgrc", b"w")
+        fp.write(b"[paths]\n")
+        fp.write(b"default = %s\n" % source)
+        fp.write(b"\n[perfarce]\n")
+        fp.write(b"ignorecase = %s\n" % encode_bool(client.ignorecase))
+        fp.write(b"keep = %s\n" % encode_bool(client.keep))
+        fp.write(b"lowercasepaths = %s\n" % encode_bool(client.lowercasepaths))
+        fp.write(b"tags = %s\n" % encode_bool(client.tags))
 
         if client.encoding:
-            fp.write("encoding = %s\n" % client.encoding)
-        cu = ui.config("perfarce", "clientuser")
+            fp.write(b"encoding = %s\n" % client.encoding)
+        cu = ui.config(b"perfarce", b"clientuser")
         if cu:
-            fp.write("clientuser = %s\n" % cu)
+            fp.write(b"clientuser = %s\n" % cu)
 
         move, copy = client.hasmovecopy()
-        fp.write("move = %s\n" % move)
-        fp.write("copy = %s\n" % copy)
+        fp.write(b"move = %s\n" % encode_bool(move))
+        fp.write(b"copy = %s\n" % encode_bool(copy))
 
         fp.close()
 
@@ -1430,9 +1446,9 @@ def clone(original, ui, source, dest=None, **opts):
 
 # --------------------------------------------------------------------------
 
-@command("p4unshelve",
+@command(b"p4unshelve",
          [  ],
-         'hg unshelve changelist...')
+         b'hg unshelve changelist...')
 def unshelve(ui, repo, changelist, **opts):
     '''Take shelved files and bring into current workspace.
     This is broken: shelved files are not diffed and merged properly.'''
@@ -1447,41 +1463,41 @@ def unshelve(ui, repo, changelist, **opts):
         raise error.Abort(str(e))
 
     depot=[]
-    p4cmd = 'unshelve -f -s %s' % changelist
+    p4cmd = b'unshelve -f -s %s' % changelist
     for d in client.run(p4cmd):
-        if d["code"] == "stat":
-            df = d["depotFile"]
+        if d[b"code"] == b"stat":
+            df = d[b"depotFile"]
             depot.append(df)
 
     if ui.debugflag:
-        ui.debug('depot = %r\n' % (depot,))
+        ui.debug(b'depot = %r\n' % (depot,))
 
     if not depot:
         ui.status(_('no files unshelved'))
         return 2
 
-    client.runs("sync", files=depot, abort=False)
-    client.runs("resolve -af", files=depot, abort=False)
+    client.runs(b"sync", files=depot, abort=False)
+    client.runs(b"resolve -af", files=depot, abort=False)
     wctx = repo[None]
 
     try:
         files=[]
-        for d in client.run("fstat", files=depot):
-            if d["code"] == "stat":
-                lf = client.repopath(d['clientFile'])
-                df = d['depotFile']
+        for d in client.run(b"fstat", files=depot):
+            if d[b"code"] == b"stat":
+                lf = client.repopath(d[b'clientFile'])
+                df = d[b'depotFile']
                 try:
-                    rv = int(d['headRev'])
-                    tp = d['headType']
-                    ac = client.actions[d['headAction']]
+                    rv = int(d[b'headRev'])
+                    tp = d[b'headType']
+                    ac = client.actions[d[b'headAction']]
                 except (KeyError,ValueError):
                     rv = 0
-                    tp = ''
-                    ac = 'A'
+                    tp = b''
+                    ac = b'A'
                 files.append((df, rv, tp, ac, lf))
 
         if ui.debugflag:
-            ui.debug('files = %r\n' % (files,))
+            ui.debug(b'files = %r\n' % (files,))
 
         ui.note(_('retrieving file contents...\n'))
         opener = repo.vfs
@@ -1490,21 +1506,21 @@ def unshelve(ui, repo, changelist, **opts):
             mode, contents = client.getfile(e)
             if contents is None:
                 # delete local file if it exists
-                ui.debug(_('unlink: %s\n') % name)
+                ui.debug(_(b'unlink: %s\n') % name)
                 opener.unlink(name)
             else:
-                ui.debug(_('writing: %s\n') % name)
-                if 'l' in mode:
+                ui.debug(_(b'writing: %s\n') % name)
+                if b'l' in mode:
                     opener.symlink(contents, name)
                 else:
                     fp = opener(name, mode="w")
                     fp.write(contents)
                     fp.close()
-                util.setflags(client.localpath(name), 'l' in mode, 'x' in mode)
+                util.setflags(client.localpath(name), b'l' in mode, b'x' in mode)
 
-        wctx.add((e[4] for e in files), "")
+        wctx.add((e[4] for e in files), b"")
     finally:
-        client.runs("revert", files=depot)
+        client.runs(b"revert", files=depot)
 
     ui.status(_('%d files unshelved\n') % len(files))
     return
@@ -1527,12 +1543,12 @@ def outgoing(original, ui, repo, dest=None, **opts):
             ui.write('%s\n' % repo[n].hex())
     else:
         ui.write(desc)
-        ui.write('\naffected files:\n')
+        ui.write(b'\naffected files:\n')
         cwd = repo.getcwd()
-        for char, files in zip('MAR', (mod, add, rem)):
+        for char, files in zip(b'MAR', (mod, add, rem)):
             for f in files:
-                ui.write('%s %s\n' % (char, repo.pathto(f[0], cwd)))
-        ui.write('\n')
+                ui.write(b'%s %s\n' % (int_to_bytes(char), repo.pathto(f[0], cwd)))
+        ui.write(b'\n')
 
 
 def push(original, ui, repo, dest=None, **opts):
@@ -1558,20 +1574,20 @@ def push(original, ui, repo, dest=None, **opts):
 
     # attempt to reuse an existing changelist
     def noid(d):
-        return client.re_hgid.sub("{{}}", d)
+        return client.re_hgid.sub(b"{{}}", d)
 
-    use = ''
+    use = b''
     noiddesc = noid(desc)
-    for d in client.run('changes -s pending -c %s -l' % client.client):
-        if noid(d['desc']) == noiddesc:
-            use = d['change']
+    for d in client.run(b'changes -s pending -c %s -l' % client.client):
+        if noid(d[b'desc']) == noiddesc:
+            use = d[b'change']
 
-    def rev(files, change="", abort=True):
+    def rev(files, change=b"", abort=True):
         if files:
-            ui.note(_('reverting: %s\n') % ' '.join(f[0] for f in files))
+            ui.note(_(b'reverting: %s\n') % b' '.join(f[0] for f in files))
             if change:
-                change = '-c %s' % change
-            client.runs('revert %s' % change,
+                change = '-c %s' % int_to_bytes( change)
+            client.runs(b'revert %s' % change,
                         files=[os.path.join(client.partial, f[0]) for f in files],
                         abort=abort)
 
@@ -1612,109 +1628,109 @@ def push(original, ui, repo, dest=None, **opts):
     rem = [r for r in rem if rems[r[0]]]
 
     if ui.debugflag:
-        ui.debug('mod = %r+%r\n' % (mod,mod2))
-        ui.debug('add = %r\n' % (add,))
-        ui.debug('remove = %r\n' % (rem,))
-        ui.debug('copies = %r\n' % (copies,))
-        ui.debug('moves = %r\n' % (moves,))
-        ui.debug('integrate = %r\n' % (ntg,))
+        ui.debug(b'mod = %r+%r\n' % (mod,mod2))
+        ui.debug(b'add = %r\n' % (add,))
+        ui.debug(b'remove = %r\n' % (rem,))
+        ui.debug(b'copies = %r\n' % (copies,))
+        ui.debug(b'moves = %r\n' % (moves,))
+        ui.debug(b'integrate = %r\n' % (ntg,))
 
     # create new changelist
     use = client.change(use, desc, jobs=opts['job'])
 
     def modal(note, cmd, files, encoder):
         'Run command grouped by file mode'
-        ui.note(note % ' '.join(f[0] for f in files))
+        ui.note(note % b' '.join(f[0] for f in files))
         retype = []
         modes = set(f[1] for f in files)
         for mode in modes:
-            opt = ""
-            if 'l' in mode:
-                opt = "symlink"
-            if 'x' in mode:
-                opt += "+x"
-            opt = opt and " -t " + opt
+            opt = b""
+            if b'l' in mode:
+                opt = b"symlink"
+            if b'x' in mode:
+                opt += b"+x"
+            opt = opt and b" -t " + opt
             bunch = [os.path.join(client.partial, encoder(f[0])) for f in files if f[1]==mode]
             if bunch:
                 for d in client.run(cmd + opt, files=bunch):
-                    if d['code'] == 'stat':
-                        basetype, oldmode, keywords, utf16 = client.decodetype(d['type'])
-                        if mode=='' and  oldmode=='x':
-                            retype.append((d['depotFile'], basetype))
+                    if d[b'code'] == b'stat':
+                        basetype, oldmode, keywords, utf16 = client.decodetype(d[b'type'])
+                        if mode==b'' and  oldmode==b'x':
+                            retype.append((d[b'depotFile'], basetype))
 
-                    if d['code'] == 'info':
-                        data = d['data']
-                        if "- use 'reopen'" in data:
+                    if d[b'code'] == b'info':
+                        data = d[b'data']
+                        if b"- use 'reopen'" in data:
                             raise error.Abort('p4: %s' % data)
         modes = set(f[1] for f in retype)
         for mode in modes:
             bunch = [f[0] for f in retype if f[1]==mode]
             if bunch:
-                client.runs("reopen -t %s"%mode, files=bunch)
+                client.runs(b"reopen -t %s"%mode, files=bunch)
 
     try:
         # now add/edit/delete the files
 
         if copies:
-            ui.note(_('copying: %s\n') % ' '.join(f[1] for f in copies))
+            ui.note(_(b'copying: %s\n') % b' '.join(f[1] for f in copies))
             for f in copies:
-                client.runs('copy -c %s %s %s' % (use, client.rootpart + f[0], client.rootpart + f[1]))
+                client.runs(b'copy -c %s %s %s' % (use, client.rootpart + f[0], client.rootpart + f[1]))
 
         if moves:
-            modal(_('opening for move: %s\n'), 'edit -c %s' % use,
-                  [(client.rootpart + f[0], f[2]) for f in moves], client.encodename)
+            modal(_(b'opening for move: %s\n'), b'edit -c %s' % use,
+                  files=[(client.rootpart + f[0], f[2]) for f in moves], encoder=client.encodename)
 
-            ui.note(_('moving: %s\n') % ' '.join(f[1] for f in moves))
+            ui.note(_(b'moving: %s\n') % b' '.join(f[1] for f in moves))
             for f in moves:
-                client.runs('move -c %s %s %s' % (
+                client.runs(b'move -c %s %s %s' % (
                     use, client.rootpart + client.encodename(f[0]),
                     client.rootpart + client.encodename(f[1])))
 
         if ntg:
-            ui.note(_('opening for integrate: %s\n') % ' '.join(f[1] for f in ntg))
+            ui.note(_(b'opening for integrate: %s\n') % b' '.join(f[1] for f in ntg))
             for f in ntg:
                 f1 = client.rootpart + f[1]
-                ui.debug(_('unlink: %s\n') % f1)
+                ui.debug(_(b'unlink: %s\n') % f1)
                 try:
                     os.unlink(f1)
                 except Exception:
                     pass
-                client.runs('integrate -c %s -Di -t %s %s' % (use, client.rootpart + f[0], f1))
+                client.runs(b'integrate -c %s -Di -t %s %s' % (use, client.rootpart + f[0], f1))
 
         if mod or mod2:
-            modal(_('opening for edit: %s\n'), 'edit -c %s' % use, mod + mod2, client.encodename)
+            modal(_(b'opening for edit: %s\n'), b'edit -c %s' % use, files=mod + mod2, encoder=client.encodename)
 
         if mod or add or mod2:
             ui.note(_('retrieving file contents...\n'))
             opener = scmutil.vfs.vfs(client.rootpart)
 
             for name, mode in mod + add + mod2:
-                ui.debug(_('writing: %s\n') % name)
-                if 'l' in mode:
+                ui.debug(_(b'writing: %s\n') % name)
+                if b'l' in mode:
                     opener.symlink(ctx[name].data(), name)
                 else:
-                    fp = opener(name, mode="w")
+                    fp = opener(name, mode=b"w")
                     fp.write(ctx[name].data())
                     fp.close()
-                util.setflags(client.localpath(name), 'l' in mode, 'x' in mode)
+                util.setflags(client.localpath(name), b'l' in mode, b'x' in mode)
 
         if add:
-            modal(_('opening for add: %s\n'), 'add -f -c %s' % use, add, lambda n:n)
+            modal(_(b'opening for add: %s\n'), b'add -f -c %s' % use, files=add, encoder=lambda n:n)
 
         if rem:
-            modal(_('opening for delete: %s\n'), 'delete -c %s' % use, rem, client.encodename)
+            modal(_(b'opening for delete: %s\n'), b'delete -c %s' % use, files=rem, encoder=client.encodename)
 
         # submit the changelist to p4 if --submit was given
-        if opts['submit'] or ui.configbool('perfarce', 'submit', default=False):
+        if opts['submit'] or ui.configbool(b'perfarce', b'submit', default=False):
             if ntg:
-                client.runs('resolve -f -c %s -ay ...' % use, abort=False)
+                client.runs(b'resolve -f -c %s -ay ...' % use, abort=False)
             client.submit(use)
         else:
-            ui.note(_('pending changelist %s\n') % use)
+            ui.note(_(b'pending changelist %s\n') % use)
 
     except Exception:
         if ui.debugflag:
-            ui.note(_('not reverting changelist %s\n') % use)
+            ui.note(_(b'not reverting changelist %s\n') % use)
         else:
             revert(ui, repo, use, **opts)
         raise
@@ -1725,10 +1741,10 @@ def push(original, ui, repo, dest=None, **opts):
 def subrevcommon(mode, ui, repo, *changes, **opts):
     'Collect list of changelist numbers from commandline'
 
-    if repo.path.startswith('p4://'):
+    if repo.path.startswith(b'p4://'):
         dest = repo.path
     else:
-        dest = ui.expandpath('default-push', 'default')
+        dest = ui.expandpath(b'default-push', b'default')
     client = p4client(ui, repo, dest)
 
     if changes:
@@ -1747,9 +1763,9 @@ def subrevcommon(mode, ui, repo, *changes, **opts):
     return client, changes
 
 
-@command("p4submit",
-         [ ('a', 'all', None, _('submit all changelists listed by p4pending')) ],
-         'hg p4submit [-a] changelist...')
+@command(b"p4submit",
+         [ (b'a', b'all', None, _('submit all changelists listed by p4pending')) ],
+         b'hg p4submit [-a] changelist...')
 def submit(ui, repo, *changes, **opts):
     'submit one or more changelists to the p4 depot.'
 
@@ -1761,9 +1777,9 @@ def submit(ui, repo, *changes, **opts):
         client.submit(c)
 
 
-@command("p4revert",
-         [ ('a', 'all', None, _('revert all changelists listed by p4pending')) ],
-         'hg p4revert [-a] changelist...')
+@command(b"p4revert",
+         [ (b'a', b'all', None, _('revert all changelists listed by p4pending')) ],
+         b'hg p4revert [-a] changelist...')
 def revert(ui, repo, *changes, **opts):
     'revert one or more pending changelists and all opened files.'
 
@@ -1773,7 +1789,7 @@ def revert(ui, repo, *changes, **opts):
         ui.status(_('reverting: %d\n') % c)
         try:
             cl = client.describe(c)
-        except Exception,e:
+        except Exception as e:
             if ui.traceback:ui.traceback()
             ui.warn('%s\n' % e)
             cl = None
@@ -1781,27 +1797,27 @@ def revert(ui, repo, *changes, **opts):
         if cl is not None:
             files = [f[0] for f in cl.files]
             if files:
-                ui.note(_('reverting: %s\n') % ' '.join(files))
-                client.runs('revert', client=cl.client, files=files, abort=False)
+                ui.note(_(b'reverting: %s\n') % b' '.join(files))
+                client.runs(b'revert', client=cl.client, files=files, abort=False)
 
             if cl.jobs:
-                ui.note(_('unfixing: %s\n') % ' '.join(cl.jobs))
-                client.runs('fix -d -c %d' % c, client=cl.client, files=cl.jobs, abort=False)
+                ui.note(_(b'unfixing: %s\n') % b' '.join(cl.jobs))
+                client.runs(b'fix -d -c %d' % c, client=cl.client, files=cl.jobs, abort=False)
 
-            ui.note(_('deleting: %d\n') % c)
-            client.runs('change -d %d' %c , client=cl.client, abort=False)
+            ui.note(_(b'deleting: %d\n') % c)
+            client.runs(b'change -d %d' %c , client=cl.client, abort=False)
 
 
-@command("p4pending",
-         [ ('s', 'summary', None, _('print p4 changelist summary')) ],
-            'hg p4pending [-s] [p4://server/client]')
+@command(b"p4pending",
+         [ (b's', b'summary', None, _('print p4 changelist summary')) ],
+            b'hg p4pending [-s] [p4://server/client]')
 def pending(ui, repo, dest=None, **opts):
     'report changelists already pushed and pending for submit in p4'
 
-    dest = ui.expandpath(dest or 'default-push', dest or 'default')
+    dest = ui.expandpath(dest or b'default-push', dest or b'default')
     client = p4client(ui, repo, dest)
 
-    dolong = opts.get('summary')
+    dolong = opts.get(b'summary')
     hexfunc = ui.verbose and hex or short
     pl = client.getpendinglist()
     if pl:
@@ -1810,37 +1826,37 @@ def pending(ui, repo, dest=None, **opts):
             if dolong:
                 if ui.verbose:
                     cl = client.describe(e[0], local=True)
-                ui.write(_('changelist:  %d\n') % e[0])
+                ui.write(_(b'changelist:  %d\n') % e[0])
                 if ui.verbose:
-                    ui.write(_('client:      %s\n') % e[4])
-                ui.write(_('status:      %s\n') % (['pending','submitted'][e[1]]))
+                    ui.write(_(b'client:      %s\n') % e[4])
+                ui.write(_(b'status:      %s\n') % ([b'pending',b'submitted'][e[1]]))
                 for n in e[2]:
-                    ui.write(_('revision:    %s\n') % hexfunc(n))
+                    ui.write(_(b'revision:    %s\n') % hexfunc(n))
                 if ui.verbose:
-                    ui.write(_('files:       %s\n') % ' '.join(f[4] for f in cl.files))
-                    ui.write(_('description:\n'))
+                    ui.write(_(b'files:       %s\n') % b' '.join(f[4] for f in cl.files))
+                    ui.write(_(b'description:\n'))
                     ui.write(e[3])
-                    ui.write('\n')
+                    ui.write(b'\n')
                 else:
-                    ui.write(_('summary:     %s\n') % e[3].splitlines()[0])
-                ui.write('\n')
+                    ui.write(_(b'summary:     %s\n') % e[3].splitlines()[0])
+                ui.write(b'\n')
             else:
                 output = []
-                output.append('%*d' % (-w, e[0]))
-                output.append(['p','s'][e[1]])
+                output.append(b'%*d' % (-w, e[0]))
+                output.append([b'p',b's'][e[1]])
                 output+=[hexfunc(n) for n in e[2]]
-                ui.write("%s\n" % ' '.join(output))
+                ui.write(b"%s\n" % b' '.join(output))
 
 
-@command("p4identify",
-         [ ('b', 'base', None, _('show base revision for new incoming changes')),
-           ('c', 'changelist', 0, _('identify the specified p4 changelist')),
-           ('i', 'id',   None, _('show global revision id')),
-           ('n', 'num',  None, _('show local revision number')),
-           ('p', 'p4',   None, _('show p4 revision number')),
-           ('r', 'rev',  '',   _('identify the specified revision')),
+@command(b"p4identify",
+         [ (b'b', b'base', None, _('show base revision for new incoming changes')),
+           (b'c', b'changelist', 0, _('identify the specified p4 changelist')),
+           (b'i', b'id',   None, _('show global revision id')),
+           (b'n', b'num',  None, _('show local revision number')),
+           (b'p', b'p4',   None, _('show p4 revision number')),
+           (b'r', b'rev',  b'',   _('identify the specified revision')),
          ],
-         'hg p4identify [-binp] [-r REV]')
+         b'hg p4identify [-binp] [-r REV]')
 def identify(ui, repo, *args, **opts):
     '''show p4 and hg revisions for the most recent p4 changelist
 
@@ -1849,50 +1865,50 @@ def identify(ui, repo, *args, **opts):
     Otherwise, find the p4 changelist for the revision given.
     '''
 
-    rev = opts.get('rev')
+    rev = opts.get(b'rev')
     if rev:
         ctx = repo[rev]
         extra = ctx.extra()
-        if 'p4' not in extra:
+        if b'p4' not in extra:
             raise error.Abort(_('no p4 changelist revision found'))
-        changelist = int(extra['p4'])
+        changelist = int(extra[b'p4'])
     else:
-        client = p4client(ui, repo, 'p4:///')
-        cl = opts.get('changelist')
+        client = p4client(ui, repo, b'p4:///')
+        cl = opts.get(b'changelist')
         if cl:
             rev = None
         else:
-            rev = '.'
-        p4rev, changelist = client.find(rev=rev, base=opts.get('base'), p4rev=cl)
+            rev = b'.'
+        p4rev, changelist = client.find(rev=rev, base=opts.get(b'base'), p4rev=cl)
         ctx = repo[p4rev]
 
-    num = opts.get('num')
-    doid = opts.get('id')
-    dop4 = opts.get('p4')
+    num = opts.get(b'num')
+    doid = opts.get(b'id')
+    dop4 = opts.get(b'p4')
     default = not (num or doid or dop4)
     hexfunc = ui.verbose and hex or short
     output = []
 
     if default or dop4:
-        output.append(str(changelist))
+        output.append(int_to_bytes(changelist))
     if num:
-        output.append(str(ctx.rev()))
+        output.append(int_to_bytes(ctx.rev()))
     if default or doid:
         output.append(hexfunc(ctx.node()))
 
-    ui.write("%s\n" % ' '.join(output))
+    ui.write(b"%s\n" % b' '.join(output))
 
 if registrar is not None:
     keywords = {}
     templatekeyword = registrar.templatekeyword(keywords)
 
-    @templatekeyword('p4')
+    @templatekeyword(b'p4')
     def showp4cl(repo, ctx, templ, **args):
         """String. p4 changelist number."""
-        return ctx.extra().get("p4")
+        return ctx.extra().get(b"p4")
 
-    @templatekeyword('p4jobs')
+    @templatekeyword(b'p4jobs')
     def showp4jobs(repo, ctx, templ, **args):
         """String. A list of p4 jobs."""
-        return ctx.extra().get("p4jobs")
+        return ctx.extra().get(b"p4jobs")
 
