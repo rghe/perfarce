@@ -92,7 +92,7 @@ Five built-in commands are overridden:
            or where the same file may be spelled differently from time
            to time (e.g. path/foo and path/FOO are the same object).
 '''
-
+from __future__ import print_function
 from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, phases, scmutil, util, url
 from mercurial.node import hex, short
 from mercurial.i18n import _
@@ -115,7 +115,7 @@ import marshal, os, re, string, sys
 propertycache=util.propertycache
 
 try:
-    from mercurial.utils.procutil import shellquote, popen
+    from mercurial.utils.procutil import shellquote
 except ImportError:
     from mercurial.util import shellquote
 
@@ -129,6 +129,16 @@ try:
 except ImportError:
     def revsymbol(repo, symbol):
         return symbol
+
+import sys
+if sys.version[0] == '2':
+    # py2 must use os.popen, because there marshal wants a true file
+    from os import popen
+else:
+    try:
+        from mercurial.utils.procutil import popen
+    except ImportError:
+        from os import popen
 
 
 file = open
@@ -223,7 +233,7 @@ class TempFile:
         except Exception:
             pass
 
-def int_to_bytes(x: int) -> bytes:
+def int_to_bytes(x):
     if isinstance(x, bytes):
         return x
 
@@ -384,7 +394,7 @@ class p4client(object):
     @propertycache
     def re_type(self): return re.compile(b'([a-z]+)?(text|binary|symlink|apple|resource|unicode|utf\d+)(\+\w+)?$')
     @propertycache
-    def re_keywords(self): return re.compile(rb'\$(Id|Header|Date|DateTime|Change|File|Revision|Author):[^$\n]*\$')
+    def re_keywords(self): return re.compile(br'\$(Id|Header|Date|DateTime|Change|File|Revision|Author):[^$\n]*\$')
     @propertycache
     def re_keywords_old(self): return re.compile(b'\$(Id|Header):[^$\n]*\$')
 
