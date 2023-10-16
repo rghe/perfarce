@@ -130,6 +130,42 @@ except ImportError:
     def revsymbol(repo, symbol):
         return symbol
 
+try:
+    from mercurial.utils.urlutil import get_unique_pull_path
+except ImportError:
+    def get_unique_pull_path(action, repo, ui, source=None, default_branches=()):
+        return ui.expandpath(source), None
+
+try:
+    from mercurial.utils.urlutil import get_unique_push_path
+except ImportError:
+    class _get_unique_push_path_return:
+        def __init__(self, path):
+            self.pushloc = path
+            self.loc = path
+
+    def get_unique_push_path(action, repo, ui, dest=None):
+        return _get_unique_push_path_return(ui.expandpath(dest))
+
+
+def _push_path(repo, ui, dest=None):
+    if dest is None:
+        if b'default-push' in ui.paths:
+            dest = b'default-push'
+        elif b'default' in ui.paths:
+            dest = b'default'
+    path = get_unique_push_path(b'push', repo, ui, dest)
+    dest = path.pushloc or path.loc
+    return dest
+
+try:
+    from mercurial.utils.urlutil import get_clone_path
+except ImportError:
+    def get_clone_path(ui, source):
+        source = ui.expandpath(source)
+        return source, source, None
+
+
 import sys
 if sys.version[0] == '2':
     # py2 must use os.popen, because there marshal wants a true file
@@ -988,7 +1024,7 @@ class p4client(object):
         if opts.get(b'mq',None):
             return True, original(ui, repo, *(source and [source] or []), **opts)
 
-        source = ui.expandpath(source or b'default')
+        source = get_unique_pull_path(b'pull', repo, ui, source or b'default')[0]
         try:
             client = p4client(ui, repo, source)
         except p4notclient:
@@ -1045,7 +1081,7 @@ class p4client(object):
         if opts.get(b'mq',None):
             return True, original(ui, repo, *(dest and [dest] or []), **opts)
 
-        dest = ui.expandpath(dest or b'default-push', dest or b'default')
+        dest = _push_path(repo, ui, dest)
         try:
             client = p4client(ui, repo, dest)
         except p4notclient:
@@ -1394,7 +1430,7 @@ def clone(original, ui, source, dest=None, **opts):
         dest = hg.defaultdest(source)
         ui.status(_("destination directory: %s\n") % dest)
     else:
-        dest = ui.expandpath(dest)
+        dest = get_clone_path(ui, dest)[1]
 
     try:
         # Mercurial 1.9
@@ -1463,7 +1499,7 @@ def unshelve(ui, repo, changelist, **opts):
     '''Take shelved files and bring into current workspace.
     This is broken: shelved files are not diffed and merged properly.'''
 
-    source = ui.expandpath('default')
+    source = get_unique_pull_path(b'p4unshelve', repo, ui, b'default')[0]
     try:
         client = p4client(ui, repo, source)
     except p4notclient as e:
@@ -1754,7 +1790,7 @@ def subrevcommon(mode, ui, repo, *changes, **opts):
     if repo.path.startswith(b'p4://'):
         dest = repo.path
     else:
-        dest = ui.expandpath(b'default-push', b'default')
+        dest = _push_path(repo, ui)
     client = p4client(ui, repo, dest)
 
     if changes:
@@ -1824,7 +1860,7 @@ def revert(ui, repo, *changes, **opts):
 def pending(ui, repo, dest=None, **opts):
     'report changelists already pushed and pending for submit in p4'
 
-    dest = ui.expandpath(dest or b'default-push', dest or b'default')
+    dest = _push_path(repo, ui, dest)
     client = p4client(ui, repo, dest)
 
     dolong = opts.get(b'summary')
