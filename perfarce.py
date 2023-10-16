@@ -131,17 +131,23 @@ except ImportError:
         return symbol
 
 try:
-    from mercurial.utils.urlutil import get_unique_pull_path
+    from mercurial.utils.urlutil import get_unique_pull_path_obj
+    def _pull_path(action, repo, ui, source):
+        return get_unique_pull_path_obj(action, ui, source).loc
 except ImportError:
-    def get_unique_pull_path(action, repo, ui, source=None, default_branches=()):
-        return ui.expandpath(source), None
+    try:
+        from mercurial.utils.urlutil import get_unique_pull_path
+        def _pull_path(action, repo, ui, source):
+            return get_unique_pull_path(action, repo, ui, source)[0]
+    except ImportError:
+        def _pull_path(action, repo, ui, source):
+            return ui.expandpath(source), None
 
 try:
     from mercurial.utils.urlutil import get_unique_push_path
 except ImportError:
     class _get_unique_push_path_return:
         def __init__(self, path):
-            self.pushloc = path
             self.loc = path
 
     def get_unique_push_path(action, repo, ui, dest=None):
@@ -155,8 +161,7 @@ def _push_path(repo, ui, dest=None):
         elif b'default' in ui.paths:
             dest = b'default'
     path = get_unique_push_path(b'push', repo, ui, dest)
-    dest = path.pushloc or path.loc
-    return dest
+    return path.loc
 
 try:
     from mercurial.utils.urlutil import get_clone_path
@@ -219,7 +224,10 @@ def uisetup(ui):
     p = extensions.wrapcommand(commands.table, b'clone', clone)
     p[1].append((b'', b'startrev', b'', b'for p4:// source set initial revisions for clone'))
     p[1].append((b'', b'encoding', b'', b'for p4:// source set encoding used by server'))
-    hg.schemes['p4'] = p4repo
+    try:
+        hg.schemes['p4'] = p4repo
+    except AttributeError:
+        hg.peer_schemes['p4'] = p4repo
 
 # --------------------------------------------------------------------------
 
@@ -1037,7 +1045,7 @@ class p4client(object):
         if opts.get(b'mq',None):
             return True, original(ui, repo, *(source and [source] or []), **opts)
 
-        source = get_unique_pull_path(b'pull', repo, ui, source or b'default')[0]
+        source = _pull_path(b'pull', repo, ui, source or b'default')
         try:
             client = p4client(ui, repo, source)
         except p4notclient:
@@ -1504,7 +1512,7 @@ def unshelve(ui, repo, changelist, **opts):
     '''Take shelved files and bring into current workspace.
     This is broken: shelved files are not diffed and merged properly.'''
 
-    source = get_unique_pull_path(b'p4unshelve', repo, ui, b'default')[0]
+    source = _pull_path(b'p4unshelve', repo, ui, b'default')
     try:
         client = p4client(ui, repo, source)
     except p4notclient as e:
