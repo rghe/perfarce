@@ -93,7 +93,7 @@ Five built-in commands are overridden:
            to time (e.g. path/foo and path/FOO are the same object).
 '''
 from __future__ import print_function
-from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, phases, scmutil, util, url
+from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, phases, scmutil, util
 from mercurial.node import hex, short
 from mercurial.i18n import _
 from mercurial.error import ConfigError
@@ -163,24 +163,17 @@ def _push_dest(ui, dest):
 
 try:
     from mercurial.utils.urlutil import get_clone_path
+    def _clone_path(ui, source):
+        return get_clone_path(ui, source)[1]
 except ImportError:
-    def get_clone_path(ui, source):
-        source = ui.expandpath(source)
-        return source, source, None
+    def _clone_path(ui, source):
+        return ui.expandpath(source)
 
 try:
     from mercurial.utils.urlutil import urllocalpath
 except ImportError:
-    def urllocalpath(dest):
-        try:
-            # Mercurial 1.9
-            dest = util.urllocalpath(dest)
-        except AttributeError:
-            try:
-                # Mercurial 1.8.2
-                dest = url.localpath(dest)
-            except AttributeError:
-                dest = hg.localpath(dest)
+    # Mercurial <5.9
+    from mercurial.util import urllocalpath
 
 import sys
 if sys.version[0] == '2':
@@ -1449,7 +1442,7 @@ def clone(original, ui, source, dest=None, **opts):
         dest = hg.defaultdest(source)
         ui.status(_("destination directory: %s\n") % dest)
     else:
-        dest = get_clone_path(ui, dest)[1]
+        dest = _clone_path(ui, dest)
 
     dest = urllocalpath(dest)
 
