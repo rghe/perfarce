@@ -165,6 +165,19 @@ except ImportError:
         source = ui.expandpath(source)
         return source, source, None
 
+try:
+    from mercurial.utils.urlutil import urllocalpath
+except ImportError:
+    def urllocalpath(dest):
+        try:
+            # Mercurial 1.9
+            dest = util.urllocalpath(dest)
+        except AttributeError:
+            try:
+                # Mercurial 1.8.2
+                dest = url.localpath(dest)
+            except AttributeError:
+                dest = hg.localpath(dest)
 
 import sys
 if sys.version[0] == '2':
@@ -1432,15 +1445,7 @@ def clone(original, ui, source, dest=None, **opts):
     else:
         dest = get_clone_path(ui, dest)[1]
 
-    try:
-        # Mercurial 1.9
-        dest = util.urllocalpath(dest)
-    except AttributeError:
-        try:
-            # Mercurial 1.8.2
-            dest = url.localpath(dest)
-        except AttributeError:
-            dest = hg.localpath(dest)
+    dest = urllocalpath(dest)
 
     if not hg.islocal(dest):
         raise error.Abort(_("destination '%s' must be local") % dest)
