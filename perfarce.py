@@ -141,7 +141,7 @@ except ImportError:
             return get_unique_pull_path(action, repo, ui, source)[0]
     except ImportError:
         def _pull_path(action, repo, ui, source):
-            return ui.expandpath(source), None
+            return ui.expandpath(source)
 
 try:
     from mercurial.utils.urlutil import get_unique_push_path
