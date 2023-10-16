@@ -145,23 +145,21 @@ except ImportError:
 
 try:
     from mercurial.utils.urlutil import get_unique_push_path
+    def _push_path(repo, ui, dest=None):
+        return get_unique_push_path(b'push', repo, ui, _push_dest(ui, dest)).loc
 except ImportError:
-    class _get_unique_push_path_return:
-        def __init__(self, path):
-            self.loc = path
-
-    def get_unique_push_path(action, repo, ui, dest=None):
-        return _get_unique_push_path_return(ui.expandpath(dest))
+    def _push_path(repo, ui, dest=None):
+        return ui.expandpath(_push_dest(ui, dest))
 
 
-def _push_path(repo, ui, dest=None):
+def _push_dest(ui, dest):
     if dest is None:
         if b'default-push' in ui.paths:
             dest = b'default-push'
         elif b'default' in ui.paths:
             dest = b'default'
-    path = get_unique_push_path(b'push', repo, ui, dest)
-    return path.loc
+    return dest
+
 
 try:
     from mercurial.utils.urlutil import get_clone_path
