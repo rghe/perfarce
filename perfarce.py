@@ -1952,13 +1952,15 @@ if registrar is not None:
     keywords = {}
     templatekeyword = registrar.templatekeyword(keywords)
 
-    @templatekeyword(b'p4')
-    def showp4cl(repo, ctx, templ, **args):
+    @templatekeyword(b'p4', requires={b'ctx'})
+    def showp4cl(context, mapping):
         """String. p4 changelist number."""
+        ctx = context.resource(mapping, b'ctx')
         return ctx.extra().get(b"p4")
 
-    @templatekeyword(b'p4jobs')
-    def showp4jobs(repo, ctx, templ, **args):
+    @templatekeyword(b'p4jobs', requires={b'ctx'})
+    def showp4jobs(context, mapping):
         """String. A list of p4 jobs."""
+        ctx = context.resource(mapping, b'ctx')
         return ctx.extra().get(b"p4jobs")
 
