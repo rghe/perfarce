@@ -1906,7 +1906,7 @@ def pending(ui, repo, dest=None, **opts):
            (b'p', b'p4',   None, _('show p4 revision number')),
            (b'r', b'rev',  b'',   _('identify the specified revision')),
          ],
-         b'hg p4identify [-binp] [-r REV]')
+         b'hg p4identify [-binp] [-r REV | -c CHANGELIST]')
 def identify(ui, repo, *args, **opts):
     '''show p4 and hg revisions for the most recent p4 changelist
 
