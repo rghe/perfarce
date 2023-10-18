@@ -252,7 +252,7 @@ cd dst
 $HG up
 
 check_contents() {
-   hg glog --template '{rev} "{desc|firstline}" files: {files}\n' | filter
+   hg glog --template '{rev} {p4} "{desc|firstline}" files: {files}\n' | filter
    hg manifest | grep -v '.hgtags' | xargs md5sum
 }
 check_contents
