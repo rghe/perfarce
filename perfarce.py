@@ -522,17 +522,10 @@ class p4client(object):
                 self.ui.note(_(b'ignoring hg revision range %s from p4\n' % m.group(1)))
         return nodes, m
 
-    def configint(self, section, name, default=None):
-        'helper for configint which is missing before Mercurial 1.9'
-        try:
-            return self.ui.configint(section, name, default)
-        except AttributeError:
-            return int(self.ui.config(section, name, default))
-
     @propertycache
     def maxargs(self):
         try:
-            r = self.configint(b'perfarce', b'maxargs', 0)
+            r = self.ui.configint(b'perfarce', b'maxargs', 0)
         except ConfigError:
             r = 0
         if r<1:
@@ -964,7 +957,7 @@ class p4client(object):
     @propertycache
     def tags(self):
         try:
-            t = self.configint(b'perfarce', b'tags', -1)
+            t = self.ui.configint(b'perfarce', b'tags', -1)
         except (ConfigError,ValueError) as e:
             t = -1
         if t<0 or t>2:
