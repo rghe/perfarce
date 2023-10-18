@@ -127,7 +127,7 @@ except ImportError:
 try:
     from mercurial.utils.urlutil import get_unique_pull_path_obj
     def _pull_path(action, repo, ui, source):
-        return get_unique_pull_path_obj(action, ui, source).loc
+        return get_unique_pull_path_obj(action, ui, source).rawloc
 except ImportError:
     # Mercurial 6.3.3 and older
     try:
@@ -142,7 +142,7 @@ except ImportError:
 try:
     from mercurial.utils.urlutil import get_unique_push_path
     def _push_path(repo, ui, dest=None):
-        return get_unique_push_path(b'push', repo, ui, _push_dest(ui, dest)).loc
+        return get_unique_push_path(b'push', repo, ui, _push_dest(ui, dest)).rawloc
 except ImportError:
     # Mercurial 5.7.1 and older
     def _push_path(repo, ui, dest=None):
@@ -161,7 +161,7 @@ def _push_dest(ui, dest):
 try:
     from mercurial.utils.urlutil import get_clone_path
     def _clone_path(ui, source):
-        return get_clone_path(ui, source)[1]
+        return get_clone_path(ui, source)[0]
 except ImportError:
     # Mercurial 5.7.1 and older
     def _clone_path(ui, source):
