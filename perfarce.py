@@ -319,11 +319,6 @@ class p4client(object):
         self.p4stat = None
         self.p4pending = None
 
-        if tuple(util.version().split(b".",2)) < (b"3",b"2"):
-            self.getfile_none=self.getfile_none_ioerr
-        else:
-            self.getfile_none=self.getfile_none_none
-
         s, c = path[5:].split(b'/', 1)
         if b':' not in s:
             s = '%s:1666' % s
@@ -892,15 +887,6 @@ class p4client(object):
         if files and n < len(files):
             raise error.Abort(_(b'incomplete reply from p4, reduce maxargs'))
 
-    def getfile_none_ioerr(self, entry):
-        "Mercurial up to 3.1 uses IOError to signal removed files"
-        self.ui.debug(b'getfile ioerror on %r\n'%(entry,))
-        raise IOError()
-
-    def getfile_none_none(self, entry):
-        "Mercurial from 3.2 uses None,None to signal removed files"
-        return None, None
-
     def getfile(self, entry):
         '''Return contents of a file in the p4 depot at the given revision number.
         Entry is a tuple
@@ -910,7 +896,7 @@ class p4client(object):
         '''
 
         if entry[3] == b'R':
-            return self.getfile_none(entry)
+            return None, None
 
         try:
             basetype, mode, keywords, utf16 = self.decodetype(entry[2])
@@ -1154,12 +1140,7 @@ class p4client(object):
             add = [(f, ctx2.flags(f)) for f in add]
             rem = [(f, b"") for f in rem]
 
-            try:
-                cpy = copies.pathcopies(ctx1, ctx2)
-            except AttributeError:
-                # Mercurial 2.0.2 and older
-                cpy = copies.copies(repo, ctx1, ctx2, repo[node.nullid])[0]
-
+            cpy = copies.pathcopies(ctx1, ctx2)
             # remember which copies change the data
             for c in cpy:
                 chg = ctx2.flags(c) != ctx1.flags(c) or ctx2[c].data() != ctx1[cpy[c]].data()
@@ -1475,11 +1456,7 @@ def clone(original, ui, source, dest=None, **opts):
     try:
         r = pull(None, ui, repo, source=source, **opts)
     finally:
-        try:
-            # Mercurial 4.4.2 and older
-            fp = repo.vfs(b"hgrc", b"w", text=True)
-        except TypeError:
-            fp = repo.vfs(b"hgrc", b"w")
+        fp = repo.vfs(b"hgrc", b"w")
         fp.write(b"[paths]\n")
         fp.write(b"default = %s\n" % source)
         fp.write(b"\n[perfarce]\n")
