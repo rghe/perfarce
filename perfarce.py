@@ -1270,6 +1270,7 @@ def pull(original, ui, repo, source=None, **opts):
     tags = {}
     trim = ui.configbool(b'perfarce', b'pull_trim_log', False)
 
+    progress = ui.makeprogress(_(b'pulling changes'), unit=_(b'changes'), total=len(changes))
     try:
         for c in changes:
             ui.note(_(b'change %s\n') % int_to_bytes(c))
@@ -1319,6 +1320,7 @@ def pull(original, ui, repo, source=None, **opts):
             repo.pushkey(b'phases', ctx.hex(), str(phases.draft), str(phases.public))
 
             ui.note(_(b'added changeset %d:%s\n') % (ctx.rev(), ctx))
+            progress.increment(item=str(c))
 
     finally:
         if tags:
@@ -1352,6 +1354,8 @@ def pull(original, ui, repo, source=None, **opts):
             p4rev = repo.commitctx(ctx)
             ctx = repo[p4rev]
             ui.note(_(b'added changeset %d:%s\n') % (ctx.rev(), ctx))
+
+    progress.complete()
 
     if opts['update']:
         return hg.update(repo, b'tip')
