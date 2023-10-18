@@ -46,7 +46,11 @@ for R in 4.5 4.5.1 4.5.2 4.5.3 \
          6.4 6.4.1 6.4.2 6.4.3 6.4.4 6.4.5 \
          6.5 6.5.1 6.5.2 ; do
    echo Building Mercurial $R
-   ( cd $HGDIR ; hg up --clean $R && make clean && make local ) >logs/$R 2>&1
+   if ! ( cd $HGDIR ; hg up --clean $R && make clean && make local ) >logs/$R 2>&1; then
+      echo "Unable to build mercurial"
+      echo "Check logs/$R for details"
+      exit 1
+   fi
    PATH=$HGDIR:$PATH
    export HGRCPATH=$CUSTOM_HGRCPATH
    if hg help perfarce | grep "pull from Perforce" ; then
