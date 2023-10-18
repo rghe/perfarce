@@ -100,29 +100,27 @@ from mercurial.error import ConfigError
 try:
     from mercurial.interfaces.repository import peer as peerrepository
 except ImportError:
-    try:
-        from mercurial.repository import peer as peerrepository
-    except ImportError:
-        try:
-            from mercurial.repo import repository as peerrepository
-        except ImportError:
-            from mercurial.peer import peerrepository
+    # Mercurial 5.1.2 and older
+    from mercurial.repository import peer as peerrepository
 import marshal, os, re, string, sys
 propertycache=util.propertycache
 
 try:
     from mercurial.utils.procutil import shellquote
 except ImportError:
+    # Mercurial 4.5.3 and older
     from mercurial.util import shellquote
 
 try:
     from mercurial.utils.dateutil import datestr
 except ImportError:
+    # Mercurial 4.5.3 and older
     from mercurial.util import datestr
 
 try:
     from mercurial.scmutil import revsymbol
 except ImportError:
+    # Mercurial 4.6.2 and older
     def revsymbol(repo, symbol):
         return symbol
 
@@ -131,11 +129,13 @@ try:
     def _pull_path(action, repo, ui, source):
         return get_unique_pull_path_obj(action, ui, source).loc
 except ImportError:
+    # Mercurial 6.3.3 and older
     try:
         from mercurial.utils.urlutil import get_unique_pull_path
         def _pull_path(action, repo, ui, source):
             return get_unique_pull_path(action, repo, ui, source)[0]
     except ImportError:
+        # Mercurial 5.7.1 and older
         def _pull_path(action, repo, ui, source):
             return ui.expandpath(source)
 
@@ -144,6 +144,7 @@ try:
     def _push_path(repo, ui, dest=None):
         return get_unique_push_path(b'push', repo, ui, _push_dest(ui, dest)).loc
 except ImportError:
+    # Mercurial 5.7.1 and older
     def _push_path(repo, ui, dest=None):
         return ui.expandpath(_push_dest(ui, dest))
 
@@ -162,13 +163,14 @@ try:
     def _clone_path(ui, source):
         return get_clone_path(ui, source)[1]
 except ImportError:
+    # Mercurial 5.7.1 and older
     def _clone_path(ui, source):
         return ui.expandpath(source)
 
 try:
     from mercurial.utils.urlutil import urllocalpath
 except ImportError:
-    # Mercurial <5.9
+    # Mercurial 5.7.1 and older
     from mercurial.util import urllocalpath
 
 import sys
@@ -179,6 +181,7 @@ else:
     try:
         from mercurial.utils.procutil import popen
     except ImportError:
+        # Mercurial 4.5.3 and older
         from os import popen
 
 
@@ -188,10 +191,10 @@ cmdtable = {}
 command = registrar.command(cmdtable)
 
 if tuple(util.version().split(b".",2)) < (b"4",b"6"):
+    # Mercurial 4.5.3 and older
     def revpairnodes(repo, rev):
         return scmutil.revpair(repo, rev)
 else:
-    # Mercurial 4.6: revpair started returning ctx objects instead of node
     def revpairnodes(repo, rev):
         ctx1, ctx2 = scmutil.revpair(repo, rev)
         return ctx1.node(), ctx2.node()
@@ -1152,9 +1155,9 @@ class p4client(object):
             rem = [(f, b"") for f in rem]
 
             try:
-                # Mercurial 2.1
                 cpy = copies.pathcopies(ctx1, ctx2)
             except AttributeError:
+                # Mercurial 2.0.2 and older
                 cpy = copies.copies(repo, ctx1, ctx2, repo[node.nullid])[0]
 
             # remember which copies change the data
@@ -1473,9 +1476,9 @@ def clone(original, ui, source, dest=None, **opts):
         r = pull(None, ui, repo, source=source, **opts)
     finally:
         try:
+            # Mercurial 4.4.2 and older
             fp = repo.vfs(b"hgrc", b"w", text=True)
         except TypeError:
-            # Mercurial 4.5
             fp = repo.vfs(b"hgrc", b"w")
         fp.write(b"[paths]\n")
         fp.write(b"default = %s\n" % source)
@@ -1976,6 +1979,7 @@ keywords = {}
 templatekeyword = registrar.templatekeyword(keywords)
 
 if tuple(util.version().split(b".",2)) < (b"4",b"6"):
+    # Mercurial 4.5.3 and older
     @templatekeyword(b'p4')
     def showp4cl(repo, ctx, templ, **args):
         """String. p4 changelist number."""
