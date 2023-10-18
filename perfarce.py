@@ -850,9 +850,9 @@ class p4client(object):
             else:
                 lf = self.repopath(d[b'clientFile'])
                 df = d[b'depotFile']
-                rv = d[b'headRev']
-                tp = d[b'headType']
-                ac = d[b'headAction']
+                rv = d.get(b'headRev', 0)
+                tp = d.get(b'headType', b'')
+                ac = d.get(b'headAction', b'add')
                 result.append((df, int(rv), tp, self.actions[ac], lf))
 
         if hasattr(self.ui, 'progress'):
@@ -1273,30 +1273,6 @@ def pull(original, ui, repo, source=None, **opts):
         return r
 
     client, p4rev, p4id, startrev, changes = r
-    entries = {}
-    c = 0
-
-    def memfilectx(context, repo, path, data, islink, isexec):
-        'wrapper to handle 3.1 vs older differences'
-        try:
-            return context.memfilectx(changectx=None, repo=repo, path=path, data=data, islink=islink, isexec=isexec)
-        except TypeError:
-            return context.memfilectx(path=path, data=data, islink=islink, isexec=isexec, copied=None)
-
-    def getfilectx(repo, memctx, fn):
-        'callback to read file data'
-        if fn.startswith(b'.hg'):
-            return repo[parent].filectx(fn)
-
-        if entries[fn][3] == b'R' and getattr(memctx, '_returnnoneformissingfiles', False):
-            # from 3.1 onvards, ctx expects None for deleted files
-            client.ui.debug(b'removed file %r\n'%(entries[fn],))
-            return None
-
-        mode, contents = client.getfile(entries[fn])
-        if contents is None:
-            return None
-        return memfilectx(context, repo, fn, contents, b'l' in mode, b'x' in mode)
 
     # for clone we support a --startrev option to fold initial changelists
     if startrev:
@@ -1352,31 +1328,12 @@ def pull(original, ui, repo, source=None, **opts):
             else:
                 extra = {b'p4': int_to_bytes(c)}
 
-            if cl.jobs:
-                extra[b'p4jobs'] = b" ".join(cl.jobs)
-
-            entries.clear()
-            if client.ignorecase:
-                manifiles = {}
-                for n in (p4rev, parent):
-                    if n:
-                        for f in repo[n]:
-                            manifiles[client.normcase(f)] = f
-                seen = set()
-                for f in files:
-                    g = client.normcase(f[4])
-                    if g not in seen:
-                        entries[manifiles.get(g, f[4])] = f
-                        seen.add(g)
-            else:
-                entries.update((f[4], f) for f in files)
-
-            ctx = context.memctx(repo, (p4rev, parent), cl.desc,
-                                 list(entries.keys()) + hgfiles,
-                                 getfilectx, cl.user, cl.date, extra)
-
-            p4rev = repo.commitctx(ctx)
-            ctx = repo[p4rev]
+            entries = _entries(repo, files, client, p1=p4rev, p2=parent)
+            getfilectx = _get_getfilectx(entries, client, p2=parent)
+            ctx = _common_commit(cl, repo, getfilectx, extra,
+                                 files=list(entries.keys()) + hgfiles,
+                                 p1=p4rev, p2=parent)
+            p4rev = ctx.hex()
 
             for l in client.labels(c):
                 tags[l] = (c, ctx.hex())
@@ -1404,8 +1361,14 @@ def pull(original, ui, repo, source=None, **opts):
             def getfilectx(repo, memctx, fn):
                 'callback to read file data'
                 assert fn==b'.hgtags'
-                return memfilectx(context, repo, fn, b''.join(tagdata), False, False)
-
+                return context.memfilectx(
+                    changectx=None,
+                    repo=repo,
+                    path=fn,
+                    data=b''.join(tagdata),
+                    islink=False,
+                    isexec=False,
+                )
             ctx = context.memctx(repo, (p4rev, None), b'\n'.join(desc),
                                  [b'.hgtags'], getfilectx)
             p4rev = repo.commitctx(ctx)
@@ -1414,6 +1377,63 @@ def pull(original, ui, repo, source=None, **opts):
 
     if opts['update']:
         return hg.update(repo, b'tip')
+
+
+def _get_getfilectx(entries, client, p2=None):
+    def getfilectx(repo, memctx, fn):
+        'callback to read file data'
+        if fn.startswith(b'.hg'):
+            return repo[p2].filectx(fn)
+
+        if entries[fn][3] == b'R' and getattr(memctx, '_returnnoneformissingfiles', False):
+            # from 3.1 onvards, ctx expects None for deleted files
+            client.ui.debug(b'removed file %r\n'%(entries[fn],))
+            return None
+
+        mode, contents = client.getfile(entries[fn])
+        if contents is None:
+            return None
+        return context.memfilectx(
+            changectx=None,
+            repo=repo,
+            path=fn,
+            data=contents,
+            islink=b'l' in mode,
+            isexec=b'x' in mode,
+        )
+    return getfilectx
+
+
+def _entries(repo, files, client, p1, p2=None):
+    entries = {}
+    if client.ignorecase:
+        manifiles = {}
+        for n in (p1, p2):
+            if n:
+                for f in repo[n]:
+                    manifiles[client.normcase(f)] = f
+        seen = set()
+        for f in files:
+            g = client.normcase(f[4])
+            if g not in seen:
+                entries[manifiles.get(g, f[4])] = f
+                seen.add(g)
+    else:
+        entries.update((f[4], f) for f in files)
+    return entries
+
+
+def _common_commit(cl, repo, getfilectx, extra, files, p1, p2=None):
+    if cl.jobs:
+        extra[b'p4jobs'] = b" ".join(cl.jobs)
+
+    ctx = context.memctx(repo, (p1, p2), cl.desc,
+                         files,
+                         getfilectx, cl.user, cl.date, extra)
+
+    p4rev = repo.commitctx(ctx)
+    ctx = repo[p4rev]
+    return ctx
 
 
 def clone(original, ui, source, dest=None, **opts):
@@ -1491,10 +1511,9 @@ def clone(original, ui, source, dest=None, **opts):
 
 @command(b"p4unshelve",
          [  ],
-         b'hg unshelve changelist...')
+         b'hg p4unshelve changelist')
 def unshelve(ui, repo, changelist, **opts):
-    '''Take shelved files and bring into current workspace.
-    This is broken: shelved files are not diffed and merged properly.'''
+    'copy the contents of a shelve onto a local draft commit'
 
     source = _pull_path(b'p4unshelve', repo, ui, b'default')
     try:
@@ -1519,54 +1538,73 @@ def unshelve(ui, repo, changelist, **opts):
         ui.status(_('no files unshelved'))
         return 2
 
-    client.runs(b"sync", files=depot, abort=False)
-    client.runs(b"resolve -af", files=depot, abort=False)
-    wctx = repo[None]
-
+    c = int(changelist)
+    ui.note(_(b'change %s\n') % int_to_bytes(c))
+    cl = client.describe(changelist, shelve=True)
+    p4rev = _get_shelve_base_rev(ui, cl, client)
     try:
-        files=[]
-        for d in client.run(b"fstat", files=depot):
-            if d[b"code"] == b"stat":
-                lf = client.repopath(d[b'clientFile'])
-                df = d[b'depotFile']
-                try:
-                    rv = int(d[b'headRev'])
-                    tp = d[b'headType']
-                    ac = client.actions[d[b'headAction']]
-                except (KeyError,ValueError):
-                    rv = 0
-                    tp = b''
-                    ac = b'A'
-                files.append((df, rv, tp, ac, lf))
+        entries = _entries(repo, client.fstat(files=depot), client, p1=p4rev)
+        getfilectx = _get_getfilectx(entries, client)
+        ctx = _common_commit(cl, repo, getfilectx, {b'p4': int_to_bytes(c)}, files=list(entries.keys()), p1=p4rev)
 
-        if ui.debugflag:
-            ui.debug(b'files = %r\n' % (files,))
-
-        ui.note(_('retrieving file contents...\n'))
-        opener = repo.vfs
-        for e in files:
-            name = e[4]
-            mode, contents = client.getfile(e)
-            if contents is None:
-                # delete local file if it exists
-                ui.debug(_(b'unlink: %s\n') % name)
-                opener.unlink(name)
-            else:
-                ui.debug(_(b'writing: %s\n') % name)
-                if b'l' in mode:
-                    opener.symlink(contents, name)
-                else:
-                    fp = opener(name, mode="w")
-                    fp.write(contents)
-                    fp.close()
-                util.setflags(client.localpath(name), b'l' in mode, b'x' in mode)
-
-        wctx.add((e[4] for e in files), b"")
+        ui.note(_(b'added changeset %d:%s\n') % (ctx.rev(), ctx))
     finally:
         client.runs(b"revert", files=depot)
 
-    ui.status(_('%d files unshelved\n') % len(files))
+    ui.status(_('%d files unshelved onto changeset %d:%s\n') % (len(depot), ctx.rev(), ctx))
     return
+
+
+def _get_shelve_base_rev(ui, cl, client):
+    """
+    To determine the change to be used as the base of the changeset,
+    find the change in which each file's base revision was modified and
+    the change in which its next revision was modified.
+    This will give us a range of changes.
+    Then, identify the corresponding revision in the repository, and create
+    a draft commit representing the shelve on top of that commit.
+    """
+    if ui.debugflag:
+        ui.debug(b'cl = %r\n' % (cl,))
+
+    if not cl.files:
+        ui.status(_('no files unshelved'))
+        return 2
+
+    def _change_for_file_rev(df, file_rev):
+        p4cmd = b'changes -m 1 %s#%d' % (df, file_rev)
+        d = client.runone(p4cmd)
+        c = int(d[b'change'])
+        return c
+    changes_low = []
+    changes_high = []
+    for f in cl.files:
+        df = f[0]
+        file_rev = f[1]
+        if file_rev == 1:
+            # TODO need to check if the file exists in the central repo
+            # and add the changelist in which it was created to changes_high
+            pass
+        else:
+            changes_low.append(_change_for_file_rev(df, file_rev))
+            changes_high.append(_change_for_file_rev(df, file_rev + 1))
+
+    if ui.debugflag:
+        ui.debug(b'changes_low = %r\n' % (changes_low,))
+        ui.debug(b'changes_high = %r\n' % (changes_high,))
+    change_low = max(changes_low)
+    change_high = min(changes_high)
+    if change_high < change_low:
+        raise error.Abort(_('unable to determine base changelist'))
+
+    p4rev, changelist_base = client.find(rev=b'.', p4rev=change_low)
+    if ui.debugflag:
+        ui.debug(b'base change = %r\n' % (changelist_base,))
+
+    if changelist_base != change_low:
+        raise error.Abort(_('error when determining base changelist'))
+
+    return p4rev
 
 
 # --------------------------------------------------------------------------
