@@ -1953,8 +1953,8 @@ def identify(ui, repo, *args, **opts):
 
     ui.write(b"%s\n" % b' '.join(output))
 
-keywords = {}
-templatekeyword = registrar.templatekeyword(keywords)
+
+templatekeyword = registrar.templatekeyword()
 
 if tuple(util.version().split(b".",2)) < (b"4",b"6"):
     # Mercurial 4.5.3 and older
