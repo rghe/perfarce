@@ -93,14 +93,10 @@ Five built-in commands are overridden:
            to time (e.g. path/foo and path/FOO are the same object).
 '''
 from __future__ import print_function
-from mercurial import cmdutil, commands, context, copies, encoding, error, extensions, hg, node, phases, scmutil, util
+from mercurial import commands, context, copies, encoding, error, extensions, hg, node, phases, registrar, scmutil, util
 from mercurial.node import hex, short
 from mercurial.i18n import _
 from mercurial.error import ConfigError
-try:
-   from mercurial import registrar
-except ImportError:
-   registrar=None
 try:
     from mercurial.interfaces.repository import peer as peerrepository
 except ImportError:
@@ -189,10 +185,7 @@ else:
 file = open
 
 cmdtable = {}
-if registrar is not None:
-    command = registrar.command(cmdtable)
-else:
-    command = cmdutil.command(cmdtable)
+command = registrar.command(cmdtable)
 
 if tuple(util.version().split(b".",2)) < (b"4",b"6"):
     def revpairnodes(repo, rev):
@@ -1948,10 +1941,21 @@ def identify(ui, repo, *args, **opts):
 
     ui.write(b"%s\n" % b' '.join(output))
 
-if registrar is not None:
-    keywords = {}
-    templatekeyword = registrar.templatekeyword(keywords)
+keywords = {}
+templatekeyword = registrar.templatekeyword(keywords)
 
+if tuple(util.version().split(b".",2)) < (b"4",b"6"):
+    @templatekeyword(b'p4')
+    def showp4cl(repo, ctx, templ, **args):
+        """String. p4 changelist number."""
+        return ctx.extra().get(b"p4")
+
+    @templatekeyword(b'p4jobs')
+    def showp4jobs(repo, ctx, templ, **args):
+        """String. A list of p4 jobs."""
+        return ctx.extra().get(b"p4jobs")
+
+else:
     @templatekeyword(b'p4', requires={b'ctx'})
     def showp4cl(context, mapping):
         """String. p4 changelist number."""
