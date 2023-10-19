@@ -1005,195 +1005,189 @@ class p4client(object):
         return tuple(mc)
 
 
-    @staticmethod
-    def pullcommon(original, ui, repo, source, **opts):
-        'Shared code for pull and incoming'
+def _pullclient(ui, repo, source, **opts):
+    if opts.get(b'mq',None):
+        return None
 
-        if opts.get(b'mq',None):
-            return True, original(ui, repo, *(source and [source] or []), **opts)
-
-        source = _pull_path(b'pull', repo, ui, source or b'default')
-        try:
-            client = p4client(ui, repo, source)
-        except p4notclient:
-            if ui.traceback:ui.traceback()
-            return True, original(ui, repo, *(source and [source] or []), **opts)
-        except p4badclient as e:
-            if ui.traceback:ui.traceback()
-            raise error.Abort(str(e))
-
-        # if present, --rev will be the last Perforce changeset number to get
-        stoprev = opts.get(b'rev')
-        stoprev = stoprev and max(int(r) for r in stoprev) or 0
-
-        # for clone we support a --startrev option to fold initial changelists
-        startrev = opts.get(b'startrev')
-        startrev = startrev and int(startrev) or 0
-
-        # for clone we support an --encoding option to set server character set
-        if opts.get(b'encoding'):
-            client.encoding = opts.get(b'encoding')
-
-        if len(repo):
-            p4rev, p4id = client.find(base=True, abort=not opts['force'])
-        else:
-            p4rev, p4id = None, 0
-        p4id = max(p4id, startrev)
-
-        if stoprev:
-           p4cset = b'%s...@%d,@%d' % (client.partial, p4id, stoprev)
-        else:
-           p4cset = b'%s...@%d,#head' % (client.partial, p4id)
-        p4cset = shellquote(p4cset)
-
-        if startrev < 0:
-            # most recent changelists
-            p4cmd = b'changes -s submitted -m %d -L %s' % (-startrev, p4cset)
-        else:
-            p4cmd = b'changes -s submitted -L %s' % p4cset
-
-        changes = []
-        for d in client.run(p4cmd):
-            c = int(d[b'change'])
-            if startrev or c != p4id:
-                changes.append(c)
-        changes.sort()
-
-        return False, (client, p4rev, p4id, startrev, changes)
+    source = _pull_path(b'pull', repo, ui, source or b'default')
+    try:
+        return p4client(ui, repo, source)
+    except p4notclient:
+        if ui.traceback:ui.traceback()
+        return None
+    except p4badclient as e:
+        if ui.traceback:ui.traceback()
+        raise error.Abort(str(e))
 
 
-    @staticmethod
-    def pushcommon(out, original, ui, repo, dest, **opts):
-        'Shared code for push and outgoing'
+def _pullcommon(repo, client, opts, startrev=0):
+    'Shared code for pull and incoming'
 
-        if opts.get(b'mq',None):
-            return True, original(ui, repo, *(dest and [dest] or []), **opts)
+    # if present, --rev will be the last Perforce changeset number to get
+    stoprev = opts.get(b'rev')
+    stoprev = stoprev and max(int(r) for r in stoprev) or 0
 
-        dest = _push_path(repo, ui, dest)
-        try:
-            client = p4client(ui, repo, dest)
-        except p4notclient:
-            if ui.traceback: ui.traceback()
-            return True, original(ui, repo, *(dest and [dest] or []), **opts)
-        except p4badclient as e:
-            raise error.Abort(str(e))
-
+    if len(repo):
         p4rev, p4id = client.find(base=True, abort=not opts['force'])
-        ctx1 = repo[p4rev]
-        rev = opts.get(b'rev')
+    else:
+        p4rev, p4id = None, 0
+    p4id = max(p4id, startrev)
 
-        if rev:
-            n1, n2 = revpairnodes(repo, rev)
-            if n2:
-                ctx1 = repo[n1]
-                ctx1 = ctx1.parents()[0]
-                ctx2 = repo[n2]
-            else:
-                ctx2 = repo[n1]
-                ctx1 = ctx2.parents()[0]
+    if stoprev:
+        p4cset = b'%s...@%d,@%d' % (client.partial, p4id, stoprev)
+    else:
+        p4cset = b'%s...@%d,#head' % (client.partial, p4id)
+    p4cset = shellquote(p4cset)
+
+    if startrev < 0:
+        # most recent changelists
+        p4cmd = b'changes -s submitted -m %d -L %s' % (-startrev, p4cset)
+    else:
+        p4cmd = b'changes -s submitted -L %s' % p4cset
+
+    changes = []
+    for d in client.run(p4cmd):
+        c = int(d[b'change'])
+        if startrev or c != p4id:
+            changes.append(c)
+    changes.sort()
+
+    return p4rev, changes
+
+
+def _pushclient(ui, repo, dest, **opts):
+    if opts.get(b'mq',None):
+        return None
+
+    dest = _push_path(repo, ui, dest)
+    try:
+        return p4client(ui, repo, dest)
+    except p4notclient:
+        if ui.traceback: ui.traceback()
+        return None
+    except p4badclient as e:
+        raise error.Abort(str(e))
+
+
+def _pushcommon(ui, repo, client, **opts):
+    'Shared code for push and outgoing'
+
+    p4rev, p4id = client.find(base=True, abort=not opts['force'])
+    ctx1 = repo[p4rev]
+    rev = opts.get(b'rev')
+
+    if rev:
+        n1, n2 = revpairnodes(repo, rev)
+        if n2:
+            ctx1 = repo[n1]
+            ctx1 = ctx1.parents()[0]
+            ctx2 = repo[n2]
         else:
-            ctx2 = repo[b'tip']
+            ctx2 = repo[n1]
+            ctx1 = ctx2.parents()[0]
+    else:
+        ctx2 = repo[b'tip']
 
-        nodes = repo.changelog.nodesbetween([ctx1.node()], [ctx2.node()])[0][bool(p4id):]
+    nodes = repo.changelog.nodesbetween([ctx1.node()], [ctx2.node()])[0][bool(p4id):]
 
-        if not opts['force']:
-            # trim off nodes at either end that have already been pushed
-            trim = False
-            for end in [0, -1]:
-                while nodes:
-                    n = repo[nodes[end]]
-                    if client.getpending(n):
-                        del nodes[end]
-                        trim = True
-                    else:
-                        break
-
-            # recalculate the context
-            if trim and nodes:
-                ctx1 = repo[nodes[0]].parents()[0]
-                ctx2 = repo[nodes[-1]]
-
-            if ui.debugflag:
-                for n in nodes:
-                    ui.debug(b'outgoing %s\n' % hex(n))
-
-            # check that remaining nodes have not already been pushed
-            for n in nodes:
-                n = repo[n]
-                fail = False
+    if not opts['force']:
+        # trim off nodes at either end that have already been pushed
+        trim = False
+        for end in [0, -1]:
+            while nodes:
+                n = repo[nodes[end]]
                 if client.getpending(n):
-                    fail = True
-                for ctx3 in n.children():
-                    extra = ctx3.extra()
-                    if b'p4' in extra:
-                        fail = True
-                        break
-                if fail:
-                    raise error.Abort(_(b'can not push, changeset %s is already in p4' % n))
-
-        # find changed files
-        if not nodes:
-            mod = add = rem = []
-            cpy = {}
-        else:
-            mod, add, rem = tuple(repo.status(node1=ctx1.node(), node2=ctx2.node()))[:3]
-            mod = [(f, ctx2.flags(f)) for f in mod]
-            add = [(f, ctx2.flags(f)) for f in add]
-            rem = [(f, b"") for f in rem]
-
-            cpy = copies.pathcopies(ctx1, ctx2)
-            # remember which copies change the data
-            for c in cpy:
-                chg = ctx2.flags(c) != ctx1.flags(c) or ctx2[c].data() != ctx1[cpy[c]].data()
-                cpy[c] = (cpy[c], chg)
-
-            # remove .hg* files (mainly for .hgtags and .hgignore)
-            for changes in [mod, add, rem]:
-                i = 0
-                while i < len(changes):
-                    f = changes[i][0]
-                    if f.startswith(b'.hg'):
-                        del changes[i]
-                    else:
-                        i += 1
-
-        if not (mod or add or rem):
-            ui.status(_(b'no changes found\n'))
-            return True, out and 1 or 0
-
-        # detect MQ
-        try:
-            mq = repo.changelog.nodesbetween([repo[revsymbol(repo, b'qbase')].node()], nodes)[0]
-            if mq:
-                if opts['force']:
-                    ui.warn(_(b'source has mq patches applied\n'))
+                    del nodes[end]
+                    trim = True
                 else:
-                    raise error.Abort(_(b'source has mq patches applied'))
-        except error.RepoError:
-            pass
-        except error.RepoLookupError:
-            pass
+                    break
 
-        # create description
-        desc = []
-        for n in nodes:
-            desc.append(repo[n].description())
-
-        if len(nodes) > 1:
-            h = [repo[nodes[0]].hex()]
-        else:
-            h = []
-        h.append(repo[nodes[-1]].hex())
-
-        desc=b'\n* * *\n'.join(desc) + b'\n\n{{mercurial %s}}\n' % (b':'.join(h))
+        # recalculate the context
+        if trim and nodes:
+            ctx1 = repo[nodes[0]].parents()[0]
+            ctx2 = repo[nodes[-1]]
 
         if ui.debugflag:
-            ui.debug(b'mod = %r\n' % (mod,))
-            ui.debug(b'add = %r\n' % (add,))
-            ui.debug(b'rem = %r\n' % (rem,))
-            ui.debug(b'cpy = %r\n' % (cpy,))
+            for n in nodes:
+                ui.debug(b'outgoing %s\n' % hex(n))
 
-        return False, (client, p4rev, p4id, nodes, ctx2, desc, mod, add, rem, cpy)
+        # check that remaining nodes have not already been pushed
+        for n in nodes:
+            n = repo[n]
+            fail = False
+            if client.getpending(n):
+                fail = True
+            for ctx3 in n.children():
+                extra = ctx3.extra()
+                if b'p4' in extra:
+                    fail = True
+                    break
+            if fail:
+                raise error.Abort(_(b'can not push, changeset %s is already in p4' % n))
+
+    # find changed files
+    if not nodes:
+        mod = add = rem = []
+        cpy = {}
+    else:
+        mod, add, rem = tuple(repo.status(node1=ctx1.node(), node2=ctx2.node()))[:3]
+        mod = [(f, ctx2.flags(f)) for f in mod]
+        add = [(f, ctx2.flags(f)) for f in add]
+        rem = [(f, b"") for f in rem]
+
+        cpy = copies.pathcopies(ctx1, ctx2)
+        # remember which copies change the data
+        for c in cpy:
+            chg = ctx2.flags(c) != ctx1.flags(c) or ctx2[c].data() != ctx1[cpy[c]].data()
+            cpy[c] = (cpy[c], chg)
+
+        # remove .hg* files (mainly for .hgtags and .hgignore)
+        for changes in [mod, add, rem]:
+            i = 0
+            while i < len(changes):
+                f = changes[i][0]
+                if f.startswith(b'.hg'):
+                    del changes[i]
+                else:
+                    i += 1
+
+    if not (mod or add or rem):
+        ui.status(_(b'no changes found\n'))
+        return None
+
+    # detect MQ
+    try:
+        mq = repo.changelog.nodesbetween([repo[revsymbol(repo, b'qbase')].node()], nodes)[0]
+        if mq:
+            if opts['force']:
+                ui.warn(_(b'source has mq patches applied\n'))
+            else:
+                raise error.Abort(_(b'source has mq patches applied'))
+    except error.RepoError:
+        pass
+    except error.RepoLookupError:
+        pass
+
+    # create description
+    desc = []
+    for n in nodes:
+        desc.append(repo[n].description())
+
+    if len(nodes) > 1:
+        h = [repo[nodes[0]].hex()]
+    else:
+        h = []
+    h.append(repo[nodes[-1]].hex())
+
+    desc=b'\n* * *\n'.join(desc) + b'\n\n{{mercurial %s}}\n' % (b':'.join(h))
+
+    if ui.debugflag:
+        ui.debug(b'mod = %r\n' % (mod,))
+        ui.debug(b'add = %r\n' % (add,))
+        ui.debug(b'rem = %r\n' % (rem,))
+        ui.debug(b'cpy = %r\n' % (cpy,))
+
+    return (p4rev, p4id, nodes, ctx2, desc, mod, add, rem, cpy)
 
 
 # --------------------------------------------------------------------------
@@ -1203,14 +1197,19 @@ def incoming(original, ui, repo, source=None, **opts):
     Returns 0 if there are incoming changes, 1 otherwise.
     '''
 
-    done, r = p4client.pullcommon(original, ui, repo, source, **opts)
-    if done:
-        return r
+    client = _pullclient(ui, repo, source, **opts)
+    if client is None:
+        return original(ui, repo, *(source and [source] or []), **opts)
+
+    ui.status(_(b'comparing with p4://%s using client %s\n') % (client.server, client.client or ''))
+    p4rev, changes = _pullcommon(repo, client, opts)
+    if not changes:
+        ui.status(_(b"no changes found\n"))
+        return 1
 
     limit = opts['limit']
     limit = limit and int(limit) or 0
 
-    client, p4rev, p4id, startrev, changes = r
     for c in changes:
         cl = client.describe(c, local=ui.verbose)
         tags = client.labels(c)
@@ -1240,17 +1239,28 @@ def incoming(original, ui, repo, source=None, **opts):
         if limit==0:
             break
 
-    return not changes and 1 or 0
+    return 0  # exit code is zero since we found incoming changes
 
 
 def pull(original, ui, repo, source=None, **opts):
     '''Wrap the pull command to look for p4 paths, import changelists'''
 
-    done, r = p4client.pullcommon(original, ui, repo, source, **opts)
-    if done:
-        return r
+    client = _pullclient(ui, repo, source, **opts)
+    if client is None:
+        return original(ui, repo, *(source and [source] or []), **opts)
 
-    client, p4rev, p4id, startrev, changes = r
+    ui.status(_(b'pulling from p4://%s using client %s\n') % (client.server, client.client or ''))
+    ui.flush()
+
+    # for clone we support an --encoding option to set server character set
+    if opts.get(b'encoding'):
+        client.encoding = opts.get(b'encoding')
+
+    # for clone we support a --startrev option to fold initial changelists
+    startrev = opts.get(b'startrev')
+    startrev = startrev and int(startrev) or 0
+
+    p4rev, changes = _pullcommon(repo, client, opts, startrev)
 
     # for clone we support a --startrev option to fold initial changelists
     if startrev:
@@ -1614,10 +1624,17 @@ def outgoing(original, ui, repo, dest=None, **opts):
     '''Wrap the outgoing command to look for p4 paths, report changes
     Returns 0 if there are outgoing changes, 1 otherwise.
     '''
-    done, r = p4client.pushcommon(True, original, ui, repo, dest, **opts)
-    if done:
-        return r
-    client, p4rev, p4id, nodes, ctx, desc, mod, add, rem, cpy = r
+
+    client = _pushclient(ui, repo, dest, **opts)
+    if client is None:
+        return original(ui, repo, *(dest and [dest] or []), **opts)
+
+    ui.status(_(b'comparing with p4://%s using client %s\n') % (client.server, client.client or ''))
+    r = _pushcommon(ui, repo, client, **opts)
+    if r is None:
+        ui.status(_(b"no changes found\n"))
+        return 1
+    p4rev, p4id, nodes, ctx, desc, mod, add, rem, cpy = r
 
     if ui.quiet:
         # for thg integration until we support templates
@@ -1636,10 +1653,20 @@ def outgoing(original, ui, repo, dest=None, **opts):
 def push(original, ui, repo, dest=None, **opts):
     '''Wrap the push command to look for p4 paths, create p4 changelist'''
 
-    done, r = p4client.pushcommon(False, original, ui, repo, dest, **opts)
-    if done:
-        return r
-    client, p4rev, p4id, nodes, ctx, desc, mod, add, rem, cpy = r
+    client = _pushclient(ui, repo, dest, **opts)
+    if client is None:
+        return original(ui, repo, *(dest and [dest] or []), **opts)
+
+    is_submit = opts['submit'] or ui.configbool(b'perfarce', b'submit', default=False)
+    if is_submit:
+        ui.status(_(b'pushing to p4://%s using client %s\n') % (client.server, client.client or ''))
+    else:
+        ui.status(_(b'pushing to client %s\n') % client.client or '')
+
+    r = _pushcommon(ui, repo, client, **opts)
+    if r is None:
+        return 0
+    p4rev, p4id, nodes, ctx, desc, mod, add, rem, cpy = r
 
     move, copy = client.hasmovecopy()
 
@@ -1803,7 +1830,7 @@ def push(original, ui, repo, dest=None, **opts):
             modal(_(b'opening for delete: %s\n'), b'delete -c %s' % use, files=rem, encoder=client.encodename)
 
         # submit the changelist to p4 if --submit was given
-        if opts['submit'] or ui.configbool(b'perfarce', b'submit', default=False):
+        if is_submit:
             if ntg:
                 client.runs(b'resolve -f -c %s -ay ...' % use, abort=False)
             client.submit(use)
