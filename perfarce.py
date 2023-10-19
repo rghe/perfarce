@@ -1270,7 +1270,30 @@ def pull(original, ui, repo, source=None, **opts):
     tags = {}
     trim = ui.configbool(b'perfarce', b'pull_trim_log', False)
 
-    progress = ui.makeprogress(_(b'pulling changes'), unit=_(b'changes'), total=len(changes))
+    try:
+        progress = ui.makeprogress(_(b'pulling changes'), unit=_(b'changes'), total=len(changes))
+    except AttributeError:
+        # Mercurial 4.6.2 and older
+        class Progress:
+            def __init__(self, ui, topic, unit, total):
+                self.ui = ui
+                self.topic = topic
+                self.unit = unit
+                self.total = total
+                self.pos = 0
+                self._progress()
+
+            def _progress(self, item=""):
+                self.ui.progress(self.topic, self.pos, item=item, unit=self.unit, total=self.total)
+
+            def increment(self, item):
+                self.pos += 1
+                self._progress(item)
+
+            def complete(self):
+                self.pos = None
+                self._progress()
+        progress = Progress(ui, _(b'pulling changes'), unit=_(b'changes'), total=len(changes))
     try:
         for c in changes:
             ui.note(_(b'change %s\n') % int_to_bytes(c))
