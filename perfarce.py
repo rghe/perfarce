@@ -1252,7 +1252,11 @@ def pull(original, ui, repo, source=None, **opts):
     startrev = opts.get(b'startrev')
     startrev = startrev and int(startrev) or 0
 
+    ui.status(_(b"searching for changes\n"))
     p4rev, changes = _pullcommon(repo, client, opts, startrev)
+    if not changes:
+        ui.status(_(b"no changes found\n"))
+        return 0
 
     # for clone we support a --startrev option to fold initial changelists
     if startrev:
@@ -1269,6 +1273,8 @@ def pull(original, ui, repo, source=None, **opts):
     if client.ignorecase:
         ui.note(_(b"ignoring case in file names.\n"))
 
+    ctx = None
+    first_ctx = None
     tags = {}
     trim = ui.configbool(b'perfarce', b'pull_trim_log', False)
 
@@ -1315,6 +1321,8 @@ def pull(original, ui, repo, source=None, **opts):
                                  files=list(entries.keys()) + hgfiles,
                                  p1=p4rev, p2=parent)
             p4rev = ctx.hex()
+            if first_ctx is None:
+                first_ctx = ctx
 
             for l in client.labels(c):
                 tags[l] = (c, ctx.hex())
@@ -1327,12 +1335,23 @@ def pull(original, ui, repo, source=None, **opts):
     finally:
         if tags:
             tag_ctx = _commit_tags(repo, client, tags)
+            p4rev = tag_ctx.hex()
             ui.note(_(b'added changeset %d:%s\n') % (tag_ctx.rev(), tag_ctx))
 
     progress.complete()
 
-    if opts['update']:
-        return hg.update(repo, b'tip')
+    # TODO use a transaction and registersummarycallback
+    if ctx is None:
+        # An error happened, no commit was created
+        return 1
+
+    if first_ctx == ctx:
+        revrange = first_ctx
+    else:
+        revrange = b'%s:%s' % (first_ctx, ctx)
+    ui.status(_(b'new changesets %s\n') % revrange)
+
+    return commands.postincoming(ui, repo, 1, opts.get(r'update'), p4rev, None)
 
 
 def _commit_tags(repo, client, tags):
