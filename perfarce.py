@@ -1326,41 +1326,45 @@ def pull(original, ui, repo, source=None, **opts):
 
     finally:
         if tags:
-            p4rev, p4id = client.find()
-            ctx = repo[p4rev]
-
-            if b'.hgtags' in ctx:
-                tagdata = [ctx.filectx(b'.hgtags').data()]
-            else:
-                tagdata = []
-
-            desc = [b'p4 tags']
-            for l in sorted(tags):
-                t = tags[l]
-                desc.append(b'   %s @ %d' % (l, t[0]))
-                tagdata.append(b'%s %s\n' % (t[1], l))
-
-            def getfilectx(repo, memctx, fn):
-                'callback to read file data'
-                assert fn==b'.hgtags'
-                return context.memfilectx(
-                    changectx=None,
-                    repo=repo,
-                    path=fn,
-                    data=b''.join(tagdata),
-                    islink=False,
-                    isexec=False,
-                )
-            ctx = context.memctx(repo, (p4rev, None), b'\n'.join(desc),
-                                 [b'.hgtags'], getfilectx)
-            p4rev = repo.commitctx(ctx)
-            ctx = repo[p4rev]
-            ui.note(_(b'added changeset %d:%s\n') % (ctx.rev(), ctx))
+            tag_ctx = _commit_tags(repo, client, tags)
+            ui.note(_(b'added changeset %d:%s\n') % (tag_ctx.rev(), tag_ctx))
 
     progress.complete()
 
     if opts['update']:
         return hg.update(repo, b'tip')
+
+
+def _commit_tags(repo, client, tags):
+    p4rev, p4id = client.find()
+    ctx = repo[p4rev]
+
+    if b'.hgtags' in ctx:
+        tagdata = [ctx.filectx(b'.hgtags').data()]
+    else:
+        tagdata = []
+
+    desc = [b'p4 tags']
+    for l in sorted(tags):
+        t = tags[l]
+        desc.append(b'   %s @ %d' % (l, t[0]))
+        tagdata.append(b'%s %s\n' % (t[1], l))
+
+    def getfilectx(repo, memctx, fn):
+        'callback to read file data'
+        assert fn==b'.hgtags'
+        return context.memfilectx(
+            changectx=None,
+            repo=repo,
+            path=fn,
+            data=b''.join(tagdata),
+            islink=False,
+            isexec=False,
+        )
+    ctx = context.memctx(repo, (p4rev, None), b'\n'.join(desc),
+                            [b'.hgtags'], getfilectx)
+    p4rev = repo.commitctx(ctx)
+    return repo[p4rev]
 
 
 def _makeprogress(ui, topic, unit="", total=None):
