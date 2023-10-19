@@ -11,15 +11,6 @@ if [ ! -d "$HGDIR" ] ; then
 fi
 mkdir -p logs
 
-CUSTOM_HGRCPATH=$PWD/logs/.hgrc
-
-cat <<EOF >$CUSTOM_HGRCPATH
-[extensions]
-perfarce=$PWD/perfarce.py
-EOF
-
-OLDPATH=$PATH
-OLDHGRCPATH=$HGRCPATH
 STAT=
 
 # No longer compatible with versions of Mercurial prior to 4.5
@@ -51,9 +42,10 @@ for R in 4.5 4.5.1 4.5.2 4.5.3 \
       echo "Check logs/$R for details"
       exit 1
    fi
+   OLDPATH=$PATH
    PATH=$HGDIR:$PATH
    export HGRCPATH=$CUSTOM_HGRCPATH
-   if hg help perfarce | grep "pull from Perforce" ; then
+   if hg --config extensions.perfarce=$PWD/perfarce.py help perfarce | grep "pull from Perforce" ; then
       echo Running
       if ./test-push-perforce "$@" >>logs/$R 2>&1 ; then
          RES=OK
