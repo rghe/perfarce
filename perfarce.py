@@ -833,7 +833,7 @@ class p4client(object):
         for d in self.run(p4cmd, files=files):
             if b'desc' in d:
                 continue
-            progress.increment(d[b'depotFile'])
+            progress.increment(item=d[b'depotFile'])
             if d[b'clientFile'].startswith(b'.hg'):
                 continue
             lf = self.repopath(d[b'clientFile'])
