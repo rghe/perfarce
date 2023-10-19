@@ -829,26 +829,21 @@ class p4client(object):
         else:
             p4cmd = b'fstat -e %d %s' % (change, shellquote(b'%s...' % self.partial))
 
+        progress = _makeprogress(self.ui, b'p4 fstat', unit=b'entries', total=len(files))
         for d in self.run(p4cmd, files=files):
-            if len(result) % 250 == 0:
-                if hasattr(self.ui, 'progress'):
-                    self.ui.progress(b'p4 fstat', len(result), unit=b'entries')
-                else:
-                    self.ui.note(_(b'%d files\r') % len(result))
-                    self.ui.flush()
-
-            if b'desc' in d or d[b'clientFile'].startswith(b'.hg'):
+            if b'desc' in d:
                 continue
-            else:
-                lf = self.repopath(d[b'clientFile'])
-                df = d[b'depotFile']
-                rv = d.get(b'headRev', 0)
-                tp = d.get(b'headType', b'')
-                ac = d.get(b'headAction', b'add')
-                result.append((df, int(rv), tp, self.actions[ac], lf))
+            progress.increment(d[b'depotFile'])
+            if d[b'clientFile'].startswith(b'.hg'):
+                continue
+            lf = self.repopath(d[b'clientFile'])
+            df = d[b'depotFile']
+            rv = d.get(b'headRev', 0)
+            tp = d.get(b'headType', b'')
+            ac = d.get(b'headAction', b'add')
+            result.append((df, int(rv), tp, self.actions[ac], lf))
 
-        if hasattr(self.ui, 'progress'):
-            self.ui.progress('p4 fstat', None)
+        progress.complete()
         self.ui.note(_(b'%d files \n') % len(result))
 
         return result
@@ -869,11 +864,10 @@ class p4client(object):
             cmd += b' ' + shellquote(b'%s...@%d' % (self.partial, change))
 
         n = 0
+        progress = _makeprogress(self.ui, b'p4 sync', unit=b'files')
         for d in self.run(cmd, files=[(b"%s@%d" % (os.path.join(self.partial, f), change)) for f in files], abort=False):
             n += 1
-            if n % 250 == 0:
-                if hasattr(self.ui, 'progress'):
-                    self.ui.progress('p4 sync', n, unit='files')
+            progress.increment()
             code = d.get(b'code')
             if code == b'error':
                 data = d[b'data'].strip()
@@ -881,9 +875,7 @@ class p4client(object):
                     self.ui.note(b'p4: %s\n' % data)
                 else:
                     raise error.Abort(b'p4: %s' % data)
-
-        if hasattr(self.ui, 'progress'):
-            self.ui.progress('p4 sync', None)
+        progress.complete()
 
         if files and n < len(files):
             raise error.Abort(_(b'incomplete reply from p4, reduce maxargs'))
@@ -1371,7 +1363,7 @@ def pull(original, ui, repo, source=None, **opts):
         return hg.update(repo, b'tip')
 
 
-def _makeprogress(ui, topic, unit, total):
+def _makeprogress(ui, topic, unit="", total=None):
     try:
         return ui.makeprogress(topic, unit=unit, total=total)
     except AttributeError:
@@ -1388,7 +1380,7 @@ def _makeprogress(ui, topic, unit, total):
             def _progress(self, item=""):
                 self.ui.progress(self.topic, self.pos, item=item, unit=self.unit, total=self.total)
 
-            def increment(self, item):
+            def increment(self, item=""):
                 self.pos += 1
                 self._progress(item)
 
