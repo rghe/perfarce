@@ -93,8 +93,8 @@ Five built-in commands are overridden:
            to time (e.g. path/foo and path/FOO are the same object).
 '''
 from __future__ import print_function
-from mercurial import commands, context, copies, encoding, error, extensions, hg, node, phases, registrar, scmutil, util
-from mercurial.node import hex, short
+from mercurial import commands, context, copies, encoding, error, extensions, hg, phases, registrar, scmutil, util
+from mercurial.node import hex, short, nullid
 from mercurial.i18n import _
 from mercurial.error import ConfigError
 try:
@@ -173,7 +173,6 @@ except ImportError:
     # Mercurial 5.7.1 and older
     from mercurial.util import urllocalpath
 
-import sys
 if sys.version[0] == '2':
     # py2 must use os.popen, because there marshal wants a true file
     from os import popen
@@ -403,7 +402,7 @@ class p4client(object):
         current = [(current,())]
         seen = set()
         while current:
-            next = []
+            next_items = []
             self.ui.debug(b"find: %s\n" % (b" ".join(hex(c[0].node()) for c in current)))
             for ctx,path in current:
                 extra = ctx.extra()
@@ -423,13 +422,13 @@ class p4client(object):
                 for p in ctx.parents():
                     if p and p not in seen:
                         seen.add(p)
-                        next.append((p, (ctx,) + path))
+                        next_items.append((p, (ctx,) + path))
 
-            current = next
+            current = next_items
 
         if abort:
             raise error.Abort(_(b'no p4 changelist revision found'))
-        return node.nullid, 0
+        return nullid, 0
 
     @propertycache
     def re_type(self): return re.compile(b'([a-z]+)?(text|binary|symlink|apple|resource|unicode|utf\d+)(\+\w+)?$')
@@ -591,7 +590,7 @@ class p4client(object):
             else:
                 raise error.Abort(_(b'p4 %s returned more than one object') % cmd)
         if value is None:
-           raise error.Abort(_(b'p4 %s returned no objects') % cmd)
+            raise error.Abort(_(b'p4 %s returned no objects') % cmd)
         return value
 
 
@@ -678,7 +677,7 @@ class p4client(object):
             try:
                 os.chdir(self.root)
                 r = None
-                for r in util.popen(cmd):
+                for r in popen(cmd):
                     r = r.strip()
                     self.ui.debug(b'< %r\n' % r)
                 if r:
