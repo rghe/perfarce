@@ -242,7 +242,7 @@ hg version
 echo % convert
 
 if ! $HG convert -s p4 $DEPOTPATH/... dst; then
-   # hg convert is broken for Mercurial 4.6 and higher
+   # hg convert is broken for Mercurial 4.6 to 5.6.1
    rm -rf dst
    $HG clone p4://$P4PORT/$P4CLIENT dst
 fi
@@ -252,7 +252,7 @@ cd dst
 $HG up
 
 check_contents() {
-   hg glog --template '{rev} "{desc|firstline}" files: {files}\n' | filter
+   hg glog --template '{rev} {p4} "{desc|firstline}" files: {files}\n' | filter
    hg manifest | grep -v '.hgtags' | xargs md5sum
 }
 check_contents
