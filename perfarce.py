@@ -93,7 +93,7 @@ Five built-in commands are overridden:
            to time (e.g. path/foo and path/FOO are the same object).
 '''
 from __future__ import print_function
-from mercurial import commands, context, copies, encoding, error, extensions, hg, phases, registrar, scmutil, util
+from mercurial import commands, context, copies, encoding, error, extensions, hg, phases, pycompat, registrar, scmutil, util
 from mercurial.node import hex, short, nullid
 from mercurial.i18n import _
 from mercurial.error import ConfigError
@@ -554,10 +554,10 @@ class p4client(object):
             tmp = TempFile('w')
             for f in files:
                 if self.ui.debugflag: self.ui.debug(b'> -x %s\n' % f)
-                print(f, file=tmp.File)
+                print(f.decode(), file=tmp.File)
             tmp.close()
             c.append(b'-x')
-            c.append(tmp.Name)
+            c.append(str.encode(tmp.Name))
             files = []
 
         c.append(cmd)
@@ -998,7 +998,7 @@ class p4client(object):
         return tuple(mc)
 
 
-def _pullclient(ui, repo, source, **opts):
+def _pullclient(ui, repo, source, opts):
     if opts.get(b'mq',None):
         return None
 
@@ -1021,7 +1021,7 @@ def _pullcommon(repo, client, opts, startrev=0):
     stoprev = stoprev and max(int(r) for r in stoprev) or 0
 
     if len(repo):
-        p4rev, p4id = client.find(base=True, abort=not opts['force'])
+        p4rev, p4id = client.find(base=True, abort=not opts[b'force'])
     else:
         p4rev, p4id = None, 0
     p4id = max(p4id, startrev)
@@ -1048,7 +1048,7 @@ def _pullcommon(repo, client, opts, startrev=0):
     return p4rev, changes
 
 
-def _pushclient(ui, repo, dest, **opts):
+def _pushclient(ui, repo, dest, opts):
     if opts.get(b'mq',None):
         return None
 
@@ -1062,10 +1062,10 @@ def _pushclient(ui, repo, dest, **opts):
         raise error.Abort(str(e))
 
 
-def _pushcommon(ui, repo, client, **opts):
+def _pushcommon(ui, repo, client, opts):
     'Shared code for push and outgoing'
 
-    p4rev, p4id = client.find(base=True, abort=not opts['force'])
+    p4rev, p4id = client.find(base=True, abort=not opts[b'force'])
     rev = opts.get(b'rev')
 
     if rev:
@@ -1079,7 +1079,7 @@ def _pushcommon(ui, repo, client, **opts):
 
     nodes = repo.changelog.nodesbetween([ctx1.node()], [ctx2.node()])[0][bool(p4id):]
 
-    if not opts['force']:
+    if not opts[b'force']:
         # trim off nodes at either end that have already been pushed
         trim = False
         for end in [0, -1]:
@@ -1148,7 +1148,7 @@ def _pushcommon(ui, repo, client, **opts):
     try:
         mq = repo.changelog.nodesbetween([repo[revsymbol(repo, b'qbase')].node()], nodes)[0]
         if mq:
-            if opts['force']:
+            if opts[b'force']:
                 ui.warn(_(b'source has mq patches applied\n'))
             else:
                 raise error.Abort(_(b'source has mq patches applied'))
@@ -1186,9 +1186,10 @@ def incoming(original, ui, repo, source=None, **opts):
     Returns 0 if there are incoming changes, 1 otherwise.
     '''
 
-    client = _pullclient(ui, repo, source, **opts)
+    opts = pycompat.byteskwargs(opts)
+    client = _pullclient(ui, repo, source, opts)
     if client is None:
-        return original(ui, repo, *(source and [source] or []), **opts)
+        return original(ui, repo, *(source and [source] or []), **pycompat.strkwargs(opts))
 
     ui.status(_(b'comparing with p4://%s using client %s\n') % (client.server, client.client or ''))
     p4rev, changes = _pullcommon(repo, client, opts)
@@ -1196,7 +1197,7 @@ def incoming(original, ui, repo, source=None, **opts):
         ui.status(_(b"no changes found\n"))
         return 1
 
-    limit = opts['limit']
+    limit = opts[b'limit']
     limit = limit and int(limit) or 0
 
     for c in changes:
@@ -1234,9 +1235,10 @@ def incoming(original, ui, repo, source=None, **opts):
 def pull(original, ui, repo, source=None, **opts):
     '''Wrap the pull command to look for p4 paths, import changelists'''
 
-    client = _pullclient(ui, repo, source, **opts)
+    opts = pycompat.byteskwargs(opts)
+    client = _pullclient(ui, repo, source, opts)
     if client is None:
-        return original(ui, repo, *(source and [source] or []), **opts)
+        return original(ui, repo, *(source and [source] or []), **pycompat.strkwargs(opts))
 
     ui.status(_(b'pulling from p4://%s using client %s\n') % (client.server, client.client or ''))
     ui.flush()
@@ -1348,7 +1350,7 @@ def pull(original, ui, repo, source=None, **opts):
         revrange = b'%s:%s' % (first_ctx, ctx)
     ui.status(_(b'new changesets %s\n') % revrange)
 
-    return commands.postincoming(ui, repo, 1, opts.get(r'update'), p4rev, None)
+    return commands.postincoming(ui, repo, 1, opts.get(b'update'), p4rev, None)
 
 
 def _commit_tags(repo, client, tags):
@@ -1470,11 +1472,12 @@ def _common_commit(cl, repo, getfilectx, extra, files, p1, p2=None):
 def clone(original, ui, source, dest=None, **opts):
     '''Wrap the clone command to look for p4 source paths, do pull'''
 
+    opts = pycompat.byteskwargs(opts)
     try:
         client = p4client(ui, None, source)
     except p4notclient:
         if ui.traceback:ui.traceback()
-        return original(ui, source, dest, **opts)
+        return original(ui, source, dest, **pycompat.strkwargs(opts))
     except p4badclient as e:
         raise error.Abort(str(e))
 
@@ -1504,11 +1507,11 @@ def clone(original, ui, source, dest=None, **opts):
 
     repo = hg.repository(ui, dest, create=True)
 
-    opts['update'] = not opts['noupdate']
-    opts['force'] = None
+    opts[b'update'] = not opts[b'noupdate']
+    opts[b'force'] = None
 
     try:
-        r = pull(None, ui, repo, source=source, **opts)
+        r = pull(None, ui, repo, source=source, **pycompat.strkwargs(opts))
     finally:
         fp = repo.vfs(b"hgrc", b"w")
         fp.write(b"[paths]\n")
@@ -1542,6 +1545,7 @@ def clone(original, ui, source, dest=None, **opts):
 def unshelve(ui, repo, changelist, **opts):
     'copy the contents of a shelve onto a local draft commit'
 
+    opts = pycompat.byteskwargs(opts)
     source = _pull_path(b'p4unshelve', repo, ui, b'default')
     try:
         client = p4client(ui, repo, source)
@@ -1641,12 +1645,13 @@ def outgoing(original, ui, repo, dest=None, **opts):
     Returns 0 if there are outgoing changes, 1 otherwise.
     '''
 
-    client = _pushclient(ui, repo, dest, **opts)
+    opts = pycompat.byteskwargs(opts)
+    client = _pushclient(ui, repo, dest, opts)
     if client is None:
-        return original(ui, repo, *(dest and [dest] or []), **opts)
+        return original(ui, repo, *(dest and [dest] or []), **pycompat.strkwargs(opts))
 
     ui.status(_(b'comparing with p4://%s using client %s\n') % (client.server, client.client or ''))
-    r = _pushcommon(ui, repo, client, **opts)
+    r = _pushcommon(ui, repo, client, opts)
     if r is None:
         ui.status(_(b"no changes found\n"))
         return 1
@@ -1669,17 +1674,18 @@ def outgoing(original, ui, repo, dest=None, **opts):
 def push(original, ui, repo, dest=None, **opts):
     '''Wrap the push command to look for p4 paths, create p4 changelist'''
 
-    client = _pushclient(ui, repo, dest, **opts)
+    opts = pycompat.byteskwargs(opts)
+    client = _pushclient(ui, repo, dest, opts)
     if client is None:
-        return original(ui, repo, *(dest and [dest] or []), **opts)
+        return original(ui, repo, *(dest and [dest] or []), **pycompat.strkwargs(opts))
 
-    is_submit = opts['submit'] or ui.configbool(b'perfarce', b'submit', default=False)
+    is_submit = opts[b'submit'] or ui.configbool(b'perfarce', b'submit', default=False)
     if is_submit:
         ui.status(_(b'pushing to p4://%s using client %s\n') % (client.server, client.client or ''))
     else:
         ui.status(_(b'pushing to client %s\n') % client.client or '')
 
-    r = _pushcommon(ui, repo, client, **opts)
+    r = _pushcommon(ui, repo, client, opts)
     if r is None:
         return 0
     p4rev, p4id, nodes, ctx, desc, mod, add, rem, cpy = r
@@ -1711,7 +1717,7 @@ def push(original, ui, repo, dest=None, **opts):
         if files:
             ui.note(_(b'reverting: %s\n') % b' '.join(f[0] for f in files))
             if change:
-                change = '-c %s' % int_to_bytes( change)
+                change = b'-c %s' % int_to_bytes( change)
             client.runs(b'revert %s' % change,
                         files=[os.path.join(client.partial, f[0]) for f in files],
                         abort=abort)
@@ -1761,7 +1767,7 @@ def push(original, ui, repo, dest=None, **opts):
         ui.debug(b'integrate = %r\n' % (ntg,))
 
     # create new changelist
-    use = client.change(use, desc, jobs=opts['job'])
+    use = client.change(use, desc, jobs=opts[b'job'])
 
     def modal(note, cmd, files, encoder):
         'Run command grouped by file mode'
@@ -1857,13 +1863,13 @@ def push(original, ui, repo, dest=None, **opts):
         if ui.debugflag:
             ui.note(_(b'not reverting changelist %s\n') % use)
         else:
-            revert(ui, repo, use, **opts)
+            revert(ui, repo, use, **pycompat.strkwargs(opts))
         raise
 
 
 # --------------------------------------------------------------------------
 
-def subrevcommon(mode, ui, repo, *changes, **opts):
+def subrevcommon(mode, ui, repo, changes, opts):
     'Collect list of changelist numbers from commandline'
 
     if repo.path.startswith(b'p4://'):
@@ -1878,7 +1884,7 @@ def subrevcommon(mode, ui, repo, *changes, **opts):
         except ValueError:
             if ui.traceback:ui.traceback()
             raise error.Abort(_(b'changelist must be a number'))
-    elif opts['all']:
+    elif opts[b'all']:
         changes = [e[0] for e in client.getpendinglist() if not e[1]]
         if not changes:
             raise error.Abort(_(b'no pending changelists to %s') % mode)
@@ -1894,7 +1900,8 @@ def subrevcommon(mode, ui, repo, *changes, **opts):
 def submit(ui, repo, *changes, **opts):
     'submit one or more changelists to the p4 depot.'
 
-    client, changes = subrevcommon('submit', ui, repo, *changes, **opts)
+    opts = pycompat.byteskwargs(opts)
+    client, changes = subrevcommon('submit', ui, repo, changes, opts)
 
     for c in changes:
         ui.status(_(b'submitting: %d\n') % c)
@@ -1908,7 +1915,8 @@ def submit(ui, repo, *changes, **opts):
 def revert(ui, repo, *changes, **opts):
     'revert one or more pending changelists and all opened files.'
 
-    client, changes = subrevcommon('revert', ui, repo, *changes, **opts)
+    opts = pycompat.byteskwargs(opts)
+    client, changes = subrevcommon('revert', ui, repo, changes, opts)
 
     for c in changes:
         ui.status(_(b'reverting: %d\n') % c)
@@ -1939,6 +1947,7 @@ def revert(ui, repo, *changes, **opts):
 def pending(ui, repo, dest=None, **opts):
     'report changelists already pushed and pending for submit in p4'
 
+    opts = pycompat.byteskwargs(opts)
     dest = _push_path(repo, ui, dest)
     client = p4client(ui, repo, dest)
 
@@ -1990,6 +1999,7 @@ def identify(ui, repo, *args, **opts):
     Otherwise, find the p4 changelist for the revision given.
     '''
 
+    opts = pycompat.byteskwargs(opts)
     rev = opts.get(b'rev')
     if rev:
         ctx = repo[rev]
