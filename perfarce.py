@@ -200,6 +200,15 @@ else:
     def revpairnodes(repo, rev):
         return scmutil.revpair(repo, rev)
 
+if tuple(util.version().split(b".",2)) < (b"6",b"4"):
+    # Mercurial 6.3.3 and older
+    class peer:
+        def __init__(self, ui, path=None):
+            self.ui = ui
+            self.path = path
+else:
+    peer = peerrepository
+
 def uisetup(ui):
     '''monkeypatch pull and push for p4:// support'''
 
@@ -222,16 +231,21 @@ def uisetup(ui):
 
 # --------------------------------------------------------------------------
 
-class p4repo(peerrepository):
+class p4repo(peer):
     'Dummy repository class so we can use -R for p4submit and p4revert'
     def __init__(self, ui, path):
-        self.path = path
-        self.ui = ui
-        self.root = None
+        super(p4repo, self).__init__(ui, path=path)
 
     @staticmethod
-    def instance(ui, path, create):
+    def make_peer(ui, path, create, intents=None, createopts=None, remotehidden=False):
+        if create:
+            raise error.Abort(_(b'cannot create new p4 repository'))
         return p4repo(ui, path)
+
+    # Mercurial 6.3.3 and older
+    @staticmethod
+    def instance(*args, **kwargs):
+        return p4repo.make_peer(*args, **kwargs)
 
     def local(self):
         return True
