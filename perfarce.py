@@ -213,9 +213,11 @@ def uisetup(ui):
     p[1].append((b'', b'startrev', b'', b'for p4:// source set initial revisions for clone'))
     p[1].append((b'', b'encoding', b'', b'for p4:// source set encoding used by server'))
     try:
-        hg.peer_schemes['p4'] = p4repo
+        hg.peer_schemes[b'p4'] = p4repo
     except AttributeError:
         # Mercurial 6.3.3 and older
+        hg.schemes[b'p4'] = p4repo
+        # Mercurial 5.1.2 and older
         hg.schemes['p4'] = p4repo
 
 # --------------------------------------------------------------------------
