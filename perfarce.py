@@ -192,11 +192,13 @@ command = registrar.command(cmdtable)
 if tuple(util.version().split(b".",2)) < (b"4",b"6"):
     # Mercurial 4.5.3 and older
     def revpairnodes(repo, rev):
-        return scmutil.revpair(repo, rev)
+        n1, n2 = scmutil.revpair(repo, rev)
+        ctx1 = repo[n1]
+        ctx2 = repo[n2] if n2 else repo[None]
+        return ctx1, ctx2
 else:
     def revpairnodes(repo, rev):
-        ctx1, ctx2 = scmutil.revpair(repo, rev)
-        return ctx1.node(), ctx2.node()
+        return scmutil.revpair(repo, rev)
 
 def uisetup(ui):
     '''monkeypatch pull and push for p4:// support'''
@@ -1064,19 +1066,15 @@ def _pushcommon(ui, repo, client, **opts):
     'Shared code for push and outgoing'
 
     p4rev, p4id = client.find(base=True, abort=not opts['force'])
-    ctx1 = repo[p4rev]
     rev = opts.get(b'rev')
 
     if rev:
-        n1, n2 = revpairnodes(repo, rev)
-        if n2:
-            ctx1 = repo[n1]
-            ctx1 = ctx1.parents()[0]
-            ctx2 = repo[n2]
-        else:
-            ctx2 = repo[n1]
-            ctx1 = ctx2.parents()[0]
+        ctx1, ctx2 = revpairnodes(repo, rev)
+        if not ctx2.node():
+            ctx2 = ctx1
+        ctx1 = ctx1.parents()[0]
     else:
+        ctx1 = repo[p4rev]
         ctx2 = repo[b'tip']
 
     nodes = repo.changelog.nodesbetween([ctx1.node()], [ctx2.node()])[0][bool(p4id):]
@@ -1116,31 +1114,31 @@ def _pushcommon(ui, repo, client, **opts):
             if fail:
                 raise error.Abort(_(b'can not push, changeset %s is already in p4' % n))
 
-    # find changed files
     if not nodes:
-        mod = add = rem = []
-        cpy = {}
-    else:
-        mod, add, rem = tuple(repo.status(node1=ctx1.node(), node2=ctx2.node()))[:3]
-        mod = [(f, ctx2.flags(f)) for f in mod]
-        add = [(f, ctx2.flags(f)) for f in add]
-        rem = [(f, b"") for f in rem]
+        ui.status(_(b'no changes found\n'))
+        return None
 
-        cpy = copies.pathcopies(ctx1, ctx2)
-        # remember which copies change the data
-        for c in cpy:
-            chg = ctx2.flags(c) != ctx1.flags(c) or ctx2[c].data() != ctx1[cpy[c]].data()
-            cpy[c] = (cpy[c], chg)
+    # find changed files
+    mod, add, rem = tuple(repo.status(node1=ctx1.node(), node2=ctx2.node()))[:3]
+    mod = [(f, ctx2.flags(f)) for f in mod]
+    add = [(f, ctx2.flags(f)) for f in add]
+    rem = [(f, b"") for f in rem]
 
-        # remove .hg* files (mainly for .hgtags and .hgignore)
-        for changes in [mod, add, rem]:
-            i = 0
-            while i < len(changes):
-                f = changes[i][0]
-                if f.startswith(b'.hg'):
-                    del changes[i]
-                else:
-                    i += 1
+    cpy = copies.pathcopies(ctx1, ctx2)
+    # remember which copies change the data
+    for c in cpy:
+        chg = ctx2.flags(c) != ctx1.flags(c) or ctx2[c].data() != ctx1[cpy[c]].data()
+        cpy[c] = (cpy[c], chg)
+
+    # remove .hg* files (mainly for .hgtags and .hgignore)
+    for changes in [mod, add, rem]:
+        i = 0
+        while i < len(changes):
+            f = changes[i][0]
+            if f.startswith(b'.hg'):
+                del changes[i]
+            else:
+                i += 1
 
     if not (mod or add or rem):
         ui.status(_(b'no changes found\n'))
